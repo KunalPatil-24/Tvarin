@@ -1,0 +1,26 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.cursor/
+.claude/
+.vscode/
+*.swp
+*.swo
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Dependencies
+node_modules/
+
+# Supabase local CLI cache
+backend/supabase/.temp/
+
+# Logs & local scratch
+*.log
+todo.txt

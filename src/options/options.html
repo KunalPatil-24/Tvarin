@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../shared/tokens.css" />
+    <link rel="stylesheet" href="options.css" />
+    <title>Tvarin — Your Profile</title>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="brand">
+          <span class="brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>
+          </span>
+          <h1>Tvarin</h1>
+        </div>
+        <p class="sub">
+          Fill in your details once. Tvarin uses them to fill job applications
+          in seconds. Everything is stored locally on this device.
+        </p>
+      </header>
+
+      <form id="profile-form">
+        <fieldset>
+          <legend>Basics</legend>
+          <div class="grid">
+            <label>First name <input name="firstName" type="text" autocomplete="given-name" /></label>
+            <label>Last name <input name="lastName" type="text" autocomplete="family-name" /></label>
+            <label>Email <input name="email" type="email" autocomplete="email" /></label>
+            <label>Country code <input name="phoneCountryCode" type="text" placeholder="+91" autocomplete="tel-country-code" /></label>
+            <label>Phone <input name="phone" type="tel" placeholder="9405824003" autocomplete="tel-national" /></label>
+            <label>Date of birth <input name="dateOfBirth" type="date" autocomplete="bday" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Address</legend>
+          <div class="grid">
+            <label class="grid__full">Street address <input name="addressLine1" type="text" autocomplete="address-line1" /></label>
+            <label>City <input name="city" type="text" autocomplete="address-level2" /></label>
+            <label>State / Province <input name="state" type="text" autocomplete="address-level1" /></label>
+            <label>Postal code <input name="postalCode" type="text" autocomplete="postal-code" /></label>
+            <label>Country <input name="country" type="text" autocomplete="country-name" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Links</legend>
+          <div class="grid">
+            <label>LinkedIn <input name="linkedin" type="url" placeholder="https://linkedin.com/in/…" /></label>
+            <label>GitHub <input name="github" type="url" placeholder="https://github.com/…" /></label>
+            <label class="grid__full">Portfolio / website <input name="portfolio" type="url" placeholder="https://…" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Experience & projects</legend>
+          <p class="field-note">
+            <strong>Education</strong> and <strong>Work Experience</strong> (company, title, dates, bullets)
+            are edited in the sidebar Profile modal — that structure fills ATS forms more reliably.
+            About, projects, and skills below still help AI drafts.
+          </p>
+          <div class="grid">
+            <label class="grid__full">About / summary
+              <textarea name="about" rows="3" placeholder="Short professional summary…"></textarea>
+            </label>
+            <label class="grid__full">Personal / side projects
+              <textarea name="projects" rows="5" placeholder="Project name, what it does, tech, outcomes, links…"></textarea>
+            </label>
+            <label class="grid__full">Skills
+              <textarea name="skills" rows="3" placeholder="Languages, frameworks, tools…"></textarea>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Resume</legend>
+          <p class="field-note">
+            Stored locally on this device. Tvarin attaches it to a resume upload
+            field when you fill a form. PDF or Word, up to 2&nbsp;MB.
+          </p>
+          <div class="resume-row">
+            <input id="resume-input" type="file" accept=".pdf,.doc,.docx" />
+            <button type="button" id="resume-remove" class="btn btn--ghost" hidden>
+              Remove
+            </button>
+          </div>
+          <p id="resume-status" class="resume-status">No resume uploaded yet.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>AI answers</legend>
+          <p class="field-note">
+            Draft answers to open-ended questions (“Why this company?”) with one
+            click. Sign in with Google (from the sidebar, or here) to unlock
+            autofill, match score, and <strong>10 free AI drafts a month</strong>
+            — no API key needed. Then focus a long-answer box on any job form and
+            click the <strong>Draft</strong> button.
+          </p>
+          <div class="auth-row">
+            <button type="button" id="ai-signin" class="btn btn--primary">
+              Sign in with Google
+            </button>
+            <button type="button" id="ai-signout" class="btn btn--ghost" hidden>
+              Sign out
+            </button>
+            <span id="ai-status" class="auth-status" aria-live="polite"></span>
+          </div>
+          <label class="grid__full ai-resume">
+            Resume / about you (text, used to ground answers)
+            <textarea name="aiResumeText" rows="8" placeholder="Paste your resume text or a short summary of your experience…"></textarea>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Application preferences</legend>
+          <p class="field-note">
+            Same questions appear on most applications with different wording.
+            Fill once; Tvarin maps by intent.
+          </p>
+          <div class="grid">
+            <label class="grid__full">Authorized to work in the job’s country?
+              <select name="workAuthorized">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="grid__full">Need visa / immigration sponsorship now or later?
+              <select name="needsSponsorship">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="grid__full">Willing to relocate?
+              <select name="willingToRelocate">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+            <label class="grid__full">Subject to a non-compete or non-solicitation?
+              <select name="hasNonCompete">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="grid__full">Current or former government employee?
+              <select name="isGovernmentEmployee">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="grid__full">Related to a company employee / conflict of interest?
+              <select name="relatedToCompany">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+            <label class="grid__full">Convictions or pending criminal charges?
+              <select name="hasCriminalRecord">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Demographics (voluntary)</legend>
+          <p class="field-note">
+            EEO self-ID. Stored only on this device. Use “Prefer not to say” anytime.
+          </p>
+          <div class="grid">
+            <label>Gender
+              <select name="gender">
+                <option value="">Not set</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="non_binary">Non-binary</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+            <label>Race / ethnicity
+              <select name="ethnicity">
+                <option value="">Not set</option>
+                <option value="american_indian">American Indian or Alaska Native</option>
+                <option value="asian">Asian</option>
+                <option value="black">Black or African American</option>
+                <option value="hispanic">Hispanic or Latino</option>
+                <option value="pacific_islander">Native Hawaiian or Other Pacific Islander</option>
+                <option value="white">White</option>
+                <option value="two_or_more">Two or more races</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+            <label class="grid__full">Veteran status
+              <select name="veteranStatus">
+                <option value="">Not set</option>
+                <option value="not_veteran">I am not a veteran</option>
+                <option value="protected_veteran">I identify as a protected veteran</option>
+                <option value="veteran">I am a veteran, but not protected</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+            <label class="grid__full">Sexual orientation
+              <select name="sexualOrientation">
+                <option value="">Not set</option>
+                <option value="heterosexual">Heterosexual / Straight</option>
+                <option value="gay_lesbian">Gay or Lesbian</option>
+                <option value="bisexual">Bisexual</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+            <label class="grid__full">Disability status
+              <select name="disabilityStatus">
+                <option value="">Not set</option>
+                <option value="yes">Yes, I have a disability (or have had one)</option>
+                <option value="no">No, I do not have a disability</option>
+                <option value="prefer_not_to_say">I do not want to answer</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Optional</legend>
+          <label class="check">
+            <input name="autoDeclineEEO" type="checkbox" />
+            <span>
+              If a demographic answer is not set, auto-answer as
+              <em>“Decline to self-identify.”</em>
+              Off by default — these questions are always voluntary.
+            </span>
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" class="btn btn--primary">Save profile</button>
+          <span id="saved" class="saved" aria-live="polite"></span>
+        </div>
+      </form>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>

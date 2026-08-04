@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tvarin — Resume</title>
+    <style>
+      html, body { margin: 0; height: 100%; font-family: Inter, system-ui, sans-serif; background: #fff; color: #111; }
+      .bar {
+        display: flex; align-items: center; gap: 12px;
+        padding: 10px 16px; border-bottom: 1px solid #ebebeb;
+      }
+      .bar strong { font-weight: 700; }
+      .bar span { color: #6b7280; font-size: 13px; }
+      .empty { padding: 40px 20px; text-align: center; color: #6b7280; }
+      iframe, embed { width: 100%; height: calc(100% - 49px); border: 0; }
+      .dl {
+        display: inline-block; margin-top: 16px; padding: 10px 16px;
+        background: #2f6fed; color: #fff; border-radius: 10px;
+        font-weight: 700; text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <strong id="name">Resume</strong>
+      <span id="meta"></span>
+    </div>
+    <div id="content"></div>
+    <script src="viewer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,55 @@
+/* Tvarin shared design tokens — white canvas + blue accent (Inter) */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/Inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/Inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/Inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/Inter-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("./fonts/Inter-800.woff2") format("woff2");
+}
+
+:root {
+  --tvarin-bg: #ffffff;
+  --tvarin-surface: #ffffff;
+  --tvarin-fg: #111111;
+  --tvarin-muted: #6b7280;
+  --tvarin-border: #ebebeb;
+  --tvarin-accent: #2f6fed;
+  --tvarin-accent-hover: #2563eb;
+  --tvarin-accent-soft: #eaf2ff;
+  --tvarin-accent-ink: #ffffff;
+  --tvarin-warn: #b45309;
+  --tvarin-ok: #059669;
+  --tvarin-radius: 14px;
+  --tvarin-radius-sm: 10px;
+  --tvarin-shadow: 0 1px 2px rgba(17, 24, 39, 0.04), 0 6px 18px rgba(17, 24, 39, 0.05);
+  --tvarin-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
