@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Tvarin — Fast Job Applications",
+  "version": "0.2.4",
+  "description": "Fill job application forms in seconds. Store your details once, apply everywhere.",
+  "permissions": ["storage", "activeTab", "scripting", "identity"],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "file:///*"
+  ],
+  "action": {
+    "default_title": "Tvarin — open sidebar"
+  },
+  "options_page": "src/options/options.html",
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": [
+        "src/content/content.js",
+        "src/sidebar/sidebar.js",
+        "src/sidebar/profile-modal.js"
+      ],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/shared/fonts/*"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"]
+    }
+  ]
+}
