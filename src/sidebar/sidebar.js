@@ -1,6 +1,7 @@
 /*
  * Tvarin right sidebar — Jobright-style in-page panel (Shadow DOM).
  * Auto-opens on detected job application pages; toolbar icon toggles it.
+ * When open, pushes the host page left (margin/width) so form CTAs stay visible.
  * Shares the content-script isolated world with content.js (TvarinAPI).
  */
 (() => {
@@ -13,6 +14,10 @@
   globalThis.__tvarinSidebarLoaded = true;
 
   const HOST_ID = "tvarin-sidebar-host";
+  const PUSH_STYLE_ID = "tvarin-page-push";
+  const PANEL_WIDTH = 398;
+  const PANEL_MAX_VW = 0.92;
+  const PANEL_TRANSITION = "0.34s cubic-bezier(0.22, 1, 0.36, 1)";
   const STORAGE_KEYS = {
     profile: "tvarin.profile",
     applications: "tvarin.applications",
@@ -25,6 +30,69 @@
   let open = false;
   let autoOpenedForUrl = "";
   let signedIn = false;
+  let pushClearTimer = null;
+
+  function getPanelWidth() {
+    return Math.min(PANEL_WIDTH, Math.round(window.innerWidth * PANEL_MAX_VW));
+  }
+
+  /** Reserve right-side space so the host page reflows instead of sitting under the panel. */
+  function applyPagePush() {
+    if (pushClearTimer) {
+      clearTimeout(pushClearTimer);
+      pushClearTimer = null;
+    }
+    const w = getPanelWidth();
+    let el = document.getElementById(PUSH_STYLE_ID);
+    if (!el) {
+      el = document.createElement("style");
+      el.id = PUSH_STYLE_ID;
+      (document.head || document.documentElement).appendChild(el);
+    }
+    el.textContent = `
+      html {
+        width: calc(100% - ${w}px) !important;
+        max-width: calc(100vw - ${w}px) !important;
+        margin-right: ${w}px !important;
+        box-sizing: border-box !important;
+        transition: margin-right ${PANEL_TRANSITION}, width ${PANEL_TRANSITION}, max-width ${PANEL_TRANSITION} !important;
+      }
+    `;
+  }
+
+  function clearPagePush({ immediate = false } = {}) {
+    const el = document.getElementById(PUSH_STYLE_ID);
+    if (!el) return;
+    if (immediate) {
+      if (pushClearTimer) {
+        clearTimeout(pushClearTimer);
+        pushClearTimer = null;
+      }
+      el.remove();
+      return;
+    }
+    el.textContent = `
+      html {
+        width: 100% !important;
+        max-width: 100vw !important;
+        margin-right: 0 !important;
+        box-sizing: border-box !important;
+        transition: margin-right ${PANEL_TRANSITION}, width ${PANEL_TRANSITION}, max-width ${PANEL_TRANSITION} !important;
+      }
+    `;
+    if (pushClearTimer) clearTimeout(pushClearTimer);
+    pushClearTimer = setTimeout(() => {
+      pushClearTimer = null;
+      if (!open) {
+        const still = document.getElementById(PUSH_STYLE_ID);
+        if (still) still.remove();
+      }
+    }, 360);
+  }
+
+  function onViewportResize() {
+    if (open) applyPagePush();
+  }
 
   function get(keys) {
     return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -114,7 +182,8 @@
       max-width: min(398px, 92vw);
       height: 100%;
       background: #ffffff;
-      box-shadow: -8px 0 32px rgba(17, 24, 39, 0.10);
+      border-left: 1px solid #e8eaed;
+      box-shadow: none;
       transform: translateX(105%);
       transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
       display: flex;
@@ -734,7 +803,7 @@
 
   const MARK_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>`;
   const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2m-3.5-6.5-1.4 1.4M6.9 17.1l-1.4 1.4m0-12.6 1.4 1.4m10.2 10.2 1.4 1.4"/></svg>`;
-  const CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+  const COLLAPSE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
   const USER_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></svg>`;
   const DOC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3z"/><path d="M14 3v5h5"/></svg>`;
   const CHEV_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
@@ -788,7 +857,7 @@
             </div>
             <div class="head__actions">
               <button class="icon-btn" type="button" data-action="profile" title="Profile & settings" aria-label="Profile & settings">${GEAR_SVG}</button>
-              <button class="icon-btn" type="button" data-action="close" title="Close" aria-label="Close sidebar">${CLOSE_SVG}</button>
+              <button class="icon-btn" type="button" data-action="close" title="Minimize" aria-label="Minimize sidebar">${COLLAPSE_SVG}</button>
             </div>
           </header>
           <div class="body view" data-view="home">
@@ -943,8 +1012,13 @@
     open = !!next;
     const wrap = root.querySelector(".wrap");
     wrap.classList.toggle("is-open", open);
-    if (open) startProgressPolling();
-    else stopProgressPolling();
+    if (open) {
+      applyPagePush();
+      startProgressPolling();
+    } else {
+      clearPagePush();
+      stopProgressPolling();
+    }
   }
 
   function toggle() {
@@ -1427,6 +1501,7 @@
   function unmount() {
     stopProgressPolling();
     open = false;
+    clearPagePush({ immediate: true });
     if (host) {
       host.remove();
       host = null;
@@ -1509,6 +1584,7 @@
   };
   setInterval(checkNav, 1200);
   window.addEventListener("popstate", checkNav);
+  window.addEventListener("resize", onViewportResize);
 
   // Wait briefly for content.js to publish TvarinAPI, then decide.
   const boot = () => {

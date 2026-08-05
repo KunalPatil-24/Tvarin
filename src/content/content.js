@@ -24,6 +24,8 @@
     applications: "tvarin.applications",
     settings: "tvarin.settings",
     resume: "tvarin.resume",
+    // Per-ATS remembered school picks: { [hostKey]: [{ from, to }, ...] }
+    schoolMaps: "tvarin.schoolMaps",
   };
 
   /* ------------------------------------------------------------------ *
@@ -52,6 +54,30 @@
         resolve(res[STORAGE_KEYS.resume] || null);
       });
     });
+  }
+
+  function getSchoolMaps() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(STORAGE_KEYS.schoolMaps, (res) => {
+        resolve(res[STORAGE_KEYS.schoolMaps] || {});
+      });
+    });
+  }
+
+  function setSchoolMaps(maps) {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [STORAGE_KEYS.schoolMaps]: maps }, resolve);
+    });
+  }
+
+  // Coarse host so Greenhouse boards share one school catalog memory.
+  function schoolMapHost() {
+    const h = location.hostname.replace(/^www\./, "");
+    if (/greenhouse\.io$/i.test(h)) return "greenhouse.io";
+    if (/lever\.co$/i.test(h)) return "lever.co";
+    if (/myworkdayjobs\.com$/i.test(h) || /\.workday\.com$/i.test(h)) return "workday";
+    if (/icims\.com$/i.test(h)) return "icims.com";
+    return h;
   }
 
   function logApplication(entry) {
@@ -259,10 +285,22 @@
     ["gpa", [/\bgpa\b/, /grade point/, /cumulative average/]],
     ["company", [/\bcompany\b/, /\bemployer\b/, /organization name/]],
     ["jobTitle", [/job title/, /position title/, /role title/, /current (job )?title/, /\bposition\b/]],
-    ["addressLine1", [/address line ?1/, /street/, /\baddress\b/, /\baddr\b/]],
+    // City/state/postal before address — Workday ids are often "address--city",
+    // and a bare /\baddress\b/ would otherwise steal those fields.
     ["city", [/\bcity\b/, /\btown\b/]],
     ["state", [/\bstate\b/, /province/, /\bregion\b/]],
     ["postalCode", [/postal/, /post ?code/, /\bzip\b/, /pin ?code/]],
+    // Only line 1 / street — never Address Line 2/3 or a generic "Address" section.
+    [
+      "addressLine1",
+      [
+        /address\s*line\s*1/,
+        /addressline\s*1/,
+        /street\s*address/,
+        /\bstreet-address\b/,
+        /(?:^|[\s_-])street(?:[\s_-]|$)/,
+      ],
+    ],
     ["country", [/\bcountry\b/]],
     ["fullName", [/full name/, /\bname\b/]],
   ];
@@ -277,6 +315,24 @@
       ) {
         continue;
       }
+      // Don't put street into Address Line 2 / 3 (or apt/suite-only fields).
+      if (
+        key === "addressLine1" &&
+        /address\s*line\s*[23]|addressline\s*[23]|\bapt\.?\b|\bsuite\b|\bunit\b/.test(
+          context
+        )
+      ) {
+        continue;
+      }
+      // Phone Extension / Ext are office PBX digits — leave blank (not the mobile number).
+      if (
+        key === "phone" &&
+        /phone\s*extension|phone.?ext(?:ension)?|\bextension\b|\bext\.?\b/.test(
+          context
+        )
+      ) {
+        continue;
+      }
       if (patterns.some((re) => re.test(context))) return key;
     }
     return null;
@@ -288,10 +344,100 @@
       : null;
   }
 
+  function listEducations(profile) {
+    if (Array.isArray(profile.educations) && profile.educations.length) {
+      return profile.educations.filter(
+        (e) =>
+          e &&
+          (e.school ||
+            e.accreditation ||
+            e.discipline ||
+            e.major ||
+            e.startDate ||
+            e.endDate ||
+            e.gpa)
+      );
+    }
+    // Legacy flat profile fields → one synthetic row.
+    if (profile.school || profile.degree || profile.discipline) {
+      return [
+        {
+          school: profile.school || "",
+          accreditation: profile.degree || "",
+          discipline: profile.discipline || "",
+          gpa: profile.gpa || "",
+          startDate: "",
+          endDate: "",
+          current: false,
+        },
+      ];
+    }
+    return [];
+  }
+
+  function educationFieldValue(edu, key) {
+    if (!edu) return "";
+    if (key === "school") return edu.school || "";
+    if (key === "degree") return edu.accreditation || edu.degree || "";
+    if (key === "discipline") return edu.discipline || edu.major || "";
+    if (key === "gpa") return edu.gpa || "";
+    if (key === "eduStartMonth" || key === "eduStartYear") {
+      const parts = parseMonthYear(edu.startDate);
+      if (!parts) return "";
+      return key === "eduStartMonth" ? parts.monthName : parts.yyyy;
+    }
+    if (key === "eduEndMonth" || key === "eduEndYear") {
+      if (edu.current) return "";
+      const parts = parseMonthYear(edu.endDate);
+      if (!parts) return "";
+      return key === "eduEndMonth" ? parts.monthName : parts.yyyy;
+    }
+    return "";
+  }
+
   function primaryExperience(profile) {
     return Array.isArray(profile.experiences) && profile.experiences.length
       ? profile.experiences[0]
       : null;
+  }
+
+  function listExperiences(profile) {
+    if (Array.isArray(profile.experiences) && profile.experiences.length) {
+      return profile.experiences.filter(
+        (e) =>
+          e &&
+          (e.company ||
+            e.title ||
+            e.location ||
+            e.startDate ||
+            e.endDate ||
+            e.summary ||
+            (Array.isArray(e.bullets) && e.bullets.some(Boolean)))
+      );
+    }
+    if (profile.company || profile.jobTitle || profile.experience) {
+      return [
+        {
+          company: profile.company || "",
+          title: profile.jobTitle || "",
+          location: "",
+          startDate: "",
+          endDate: "",
+          current: false,
+          summary: profile.experience || "",
+          bullets: [""],
+        },
+      ];
+    }
+    return [];
+  }
+
+  function experienceRoleText(exp) {
+    if (!exp) return "";
+    const bullets = Array.isArray(exp.bullets)
+      ? exp.bullets.filter(Boolean).map((b) => `• ${b}`).join("\n")
+      : "";
+    return [exp.summary, bullets].filter(Boolean).join("\n").trim();
   }
 
   // Parse profile <input type="month"> values (YYYY-MM) into parts.
@@ -916,6 +1062,12 @@
       closeCombobox(el);
       return false;
     }
+    await clickComboboxOption(target);
+    return true;
+  }
+
+  async function clickComboboxOption(target) {
+    if (!target) return false;
     target.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
     );
@@ -925,6 +1077,17 @@
     target.click();
     await sleep(140);
     return true;
+  }
+
+  function readComboboxLabel(el) {
+    if (!el) return "";
+    const root =
+      el.closest('[class*="select__container"]') ||
+      el.closest('[class*="select"]') ||
+      el.parentElement;
+    if (!root) return "";
+    const single = root.querySelector('[class*="single-value"]');
+    return single && single.textContent ? single.textContent.trim() : "";
   }
 
   // Map free-text degree (B.S., M.Tech…) onto Greenhouse's fixed options.
@@ -964,6 +1127,523 @@
     const tokens = w.split(/[^a-z0-9]+/).filter((t) => t.length > 2);
     if (tokens.length && tokens.every((t) => o.includes(t))) return true;
     return false;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3b-school. School combobox matching (no profile aliases)
+   *   - Score live menu options (tokens, acronyms, city)
+   *   - Soft-expand IIIT / IIT / NIT / ABV-style short forms
+   *   - Remember per-ATS picks; toast + learn on miss
+   * ------------------------------------------------------------------ */
+
+  const SCHOOL_STOP = new Set([
+    "of",
+    "the",
+    "and",
+    "for",
+    "in",
+    "at",
+    "a",
+    "an",
+    "to",
+    "by",
+    "on",
+    "de",
+  ]);
+  const SCHOOL_WEAK = new Set([
+    "institute",
+    "institution",
+    "university",
+    "college",
+    "school",
+    "campus",
+    "technology",
+    "technologies",
+    "management",
+    "information",
+    "science",
+    "sciences",
+    "engineering",
+    "education",
+    "indian",
+    "national",
+    "international",
+    "state",
+    "viswavidyalaya",
+    "deemed",
+  ]);
+  const SCHOOL_ACRONYM_EXPAND = {
+    iiitm: [
+      "indian",
+      "institute",
+      "information",
+      "technology",
+      "management",
+      "iiit",
+    ],
+    iiit: ["indian", "institute", "information", "technology"],
+    iiitdm: [
+      "indian",
+      "institute",
+      "information",
+      "technology",
+      "design",
+      "manufacturing",
+      "iiit",
+    ],
+    iit: ["indian", "institute", "technology"],
+    nit: ["national", "institute", "technology"],
+    nits: ["national", "institute", "technology"],
+    bits: ["birla", "institute", "technology", "science"],
+    abv: ["atal", "bihari", "vajpayee", "behari"],
+    nitk: ["national", "institute", "technology", "karnataka", "surathkal"],
+    nitw: ["national", "institute", "technology", "warangal"],
+    nitt: ["national", "institute", "technology", "trichy", "tiruchirappalli"],
+  };
+
+  // IIT-/NIT-/IIIT- campus codes: "IIT-B" / "IITB" / "(IITB)" → place tokens.
+  const SCHOOL_CAMPUS_CODE = {
+    b: ["bombay", "mumbai"],
+    d: ["delhi"],
+    g: ["guwahati"],
+    k: ["kanpur"],
+    kgp: ["kharagpur"],
+    m: ["madras", "chennai"],
+    r: ["roorkee"],
+    h: ["hyderabad"],
+    i: ["indore"],
+    bhu: ["varanasi", "bhu", "banaras"],
+    j: ["jodhpur"],
+    p: ["patna"],
+    pn: ["patna"],
+    bh: ["bhilai"],
+    goa: ["goa"],
+    ism: ["dhanbad", "ism"],
+    ism_dhanbad: ["dhanbad"],
+  };
+
+  const SCHOOL_MIN_SCORE = 0.58;
+  const SCHOOL_HIGH_SCORE = 0.82;
+
+  // "IIT-B" / "IIT B" / "I.I.T.B" → "iitb" for hyphen-insensitive compare.
+  function schoolCompact(s) {
+    return String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  function tokenizeSchool(s) {
+    return String(s || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t && t.length > 1 && !SCHOOL_STOP.has(t));
+  }
+
+  function embeddedAcronyms(text) {
+    const raw = String(text || "");
+    const hits = new Set();
+    const add = (s) => {
+      const t = String(s || "").toLowerCase();
+      if (t.length >= 2 && t.length <= 12) hits.add(t);
+    };
+
+    // Parenthetical codes on ATS options: "(IITB)", "(IIT-B)"
+    for (const m of raw.match(/\(([A-Za-z0-9][A-Za-z0-9-]{1,11})\)/g) || []) {
+      const inner = m.slice(1, -1);
+      add(inner);
+      add(schoolCompact(inner));
+    }
+
+    // Hyphenated / dotted codes: ABV-IIITM, IIT-B, IIT-KGP
+    for (const m of raw.match(/\b[A-Za-z]{2,}(?:[.-][A-Za-z0-9]{1,8})+\b/g) || []) {
+      add(schoolCompact(m)); // IIT-B → iitb
+      for (const part of m.split(/[.-]/)) {
+        if (
+          /^[A-Za-z]{2,8}$/.test(part) ||
+          SCHOOL_ACRONYM_EXPAND[part.toLowerCase()] ||
+          SCHOOL_CAMPUS_CODE[part.toLowerCase()]
+        ) {
+          add(part);
+        }
+      }
+    }
+
+    // All-caps blobs: IITB, IIITM
+    for (const m of raw.match(/\b[A-Z]{2,8}\b/g) || []) {
+      add(m);
+    }
+
+    // Short profile forms already compact: "iitb"
+    const compact = schoolCompact(raw);
+    if (/^(iit|nit|iiit|bits)[a-z]{0,4}$/.test(compact)) add(compact);
+
+    return [...hits];
+  }
+
+  function campusTokensFromAcronym(compact) {
+    const c = String(compact || "").toLowerCase();
+    const m = c.match(/^(iit|nit|iiit)([a-z]{1,4})$/);
+    if (!m) return [];
+    const places = SCHOOL_CAMPUS_CODE[m[2]];
+    return places ? places.slice() : [];
+  }
+
+  function initialsAcronym(tokens) {
+    if (!tokens.length) return "";
+    return tokens.map((t) => t[0]).join("");
+  }
+
+  function expandSchoolTokens(text) {
+    const base = tokenizeSchool(text);
+    const out = new Set(base);
+    for (const a of embeddedAcronyms(text)) {
+      out.add(a);
+      for (const place of campusTokensFromAcronym(a)) out.add(place);
+    }
+
+    // De-hyphenate whole string as one token when it looks like a short code.
+    const compact = schoolCompact(text);
+    if (compact.length >= 3 && compact.length <= 12 && compact.length <= String(text).replace(/\s/g, "").length) {
+      out.add(compact);
+      for (const place of campusTokensFromAcronym(compact)) out.add(place);
+    }
+
+    const initials = initialsAcronym(base);
+    if (initials.length >= 3 && initials.length <= 8) out.add(initials);
+    // IIITM-style: drop weak words then initials of content + key weak (institute/info/tech/mgmt)
+    const contentish = base.filter(
+      (t) =>
+        !SCHOOL_WEAK.has(t) ||
+        /^(institute|information|technology|management|design|manufacturing|science)$/.test(
+          t
+        )
+    );
+    const alt = initialsAcronym(contentish);
+    if (alt.length >= 3 && alt.length <= 8) out.add(alt);
+
+    for (const t of [...out]) {
+      const exp = SCHOOL_ACRONYM_EXPAND[t];
+      if (exp) exp.forEach((x) => out.add(x));
+    }
+    // If long form present, add common short forms.
+    const joined = [...out].join(" ");
+    if (
+      /indian/.test(joined) &&
+      /institute/.test(joined) &&
+      /information/.test(joined) &&
+      /technology/.test(joined)
+    ) {
+      out.add("iiit");
+      if (/management/.test(joined)) out.add("iiitm");
+    }
+    if (
+      /indian/.test(joined) &&
+      /institute/.test(joined) &&
+      /technology/.test(joined) &&
+      !/information/.test(joined)
+    ) {
+      out.add("iit");
+    }
+    if (/national/.test(joined) && /institute/.test(joined) && /technology/.test(joined)) {
+      out.add("nit");
+    }
+    if (/atal/.test(joined) && (/vajpayee/.test(joined) || /behari/.test(joined))) {
+      out.add("abv");
+    }
+    // Bombay ↔ Mumbai for IIT-B style matches.
+    if (out.has("bombay")) out.add("mumbai");
+    if (out.has("mumbai")) out.add("bombay");
+    if (out.has("madras")) out.add("chennai");
+    if (out.has("chennai")) out.add("madras");
+    return [...out];
+  }
+
+  function schoolPlaceTokens(text) {
+    const tokens = expandSchoolTokens(text);
+    return tokens.filter(
+      (t) =>
+        !SCHOOL_WEAK.has(t) &&
+        !SCHOOL_ACRONYM_EXPAND[t] &&
+        !/^(iit|nit|iiit|bits|abv)/.test(t) &&
+        t.length > 3
+    );
+  }
+
+  function schoolTypeaheadQueries(profileSchool) {
+    const raw = String(profileSchool || "").trim();
+    if (!raw) return [];
+    const tokens = tokenizeSchool(raw);
+    const expanded = expandSchoolTokens(raw);
+    const places = schoolPlaceTokens(raw);
+    const queries = [];
+    const push = (q) => {
+      const s = String(q || "").trim();
+      if (s.length < 2) return;
+      if (queries.some((x) => x.toLowerCase() === s.toLowerCase())) return;
+      queries.push(s);
+    };
+
+    // Prefer compact codes first: IIT-B → IITB (what Greenhouse lists as "(IITB)").
+    const compact = schoolCompact(raw);
+    if (/^(iit|nit|iiit|bits)[a-z]{0,4}$/.test(compact)) {
+      push(compact.toUpperCase());
+      for (const place of campusTokensFromAcronym(compact)) {
+        push(place);
+        push(`IIT ${place}`);
+        push(`Indian Institute of Technology ${place}`);
+      }
+    }
+
+    for (const a of embeddedAcronyms(raw)) {
+      push(a.toUpperCase());
+      for (const p of places) push(`${a.toUpperCase()} ${p}`);
+    }
+    for (const a of ["iiitm", "iiitdm", "iiit", "iit", "nit", "bits", "abv"]) {
+      if (!expanded.includes(a)) continue;
+      push(a.toUpperCase());
+      for (const p of places) {
+        push(`${a.toUpperCase()} ${p}`);
+        if (a === "iiitm") push(`IIIT ${p}`);
+        if (a === "iit") push(`IIT ${p}`);
+      }
+    }
+    for (const p of places.slice(0, 2)) push(p);
+    // Compact multi-token probe before the full legal name.
+    const strong = tokens.filter((t) => !SCHOOL_WEAK.has(t));
+    if (strong.length) push(strong.slice(0, 3).join(" "));
+    if (tokens.length >= 2) push(tokens.slice(0, 4).join(" "));
+    return queries.slice(0, 7);
+  }
+
+  function scoreSchoolOption(optionText, profileSchool) {
+    const oRaw = String(optionText || "").trim();
+    const wRaw = String(profileSchool || "").trim();
+    if (!oRaw || !wRaw) return 0;
+    const o = oRaw.toLowerCase();
+    const w = wRaw.toLowerCase();
+    if (o === w) return 1;
+    if (o.includes(w) || w.includes(o)) return 0.94;
+
+    // Hyphen/space-insensitive: "IIT-B" ↔ "(IITB)" / "...Bombay (IITB)"
+    const wC = schoolCompact(wRaw);
+    const oC = schoolCompact(oRaw);
+    if (wC.length >= 3 && (oC === wC || oC.includes(wC) || wC.includes(oC))) {
+      return wC.length >= 4 ? 0.97 : 0.9;
+    }
+
+    const wTok = expandSchoolTokens(wRaw);
+    const oTok = expandSchoolTokens(oRaw);
+    const oSet = new Set(oTok);
+    const wSet = new Set(wTok);
+
+    const wStrong = wTok.filter((t) => !SCHOOL_WEAK.has(t) && t.length > 2);
+    const oStrong = oTok.filter((t) => !SCHOOL_WEAK.has(t) && t.length > 2);
+    if (!wStrong.length) return 0;
+
+    let wHits = 0;
+    for (const t of wStrong) {
+      if (oSet.has(t) || o.includes(t) || oC.includes(schoolCompact(t))) wHits++;
+    }
+    let oHits = 0;
+    for (const t of oStrong) {
+      if (wSet.has(t) || w.includes(t) || wC.includes(schoolCompact(t))) oHits++;
+    }
+    const precision = wHits / wStrong.length;
+    const recall = oStrong.length ? oHits / oStrong.length : precision;
+    let score = 0.55 * precision + 0.45 * recall;
+
+    const wAc = new Set([
+      ...embeddedAcronyms(wRaw),
+      ...wTok.filter((t) => SCHOOL_ACRONYM_EXPAND[t] || /^(iit|nit|iiit)[a-z]{0,4}$/.test(t)),
+    ]);
+    const oAc = new Set([
+      ...embeddedAcronyms(oRaw),
+      ...oTok.filter((t) => SCHOOL_ACRONYM_EXPAND[t] || /^(iit|nit|iiit)[a-z]{0,4}$/.test(t)),
+    ]);
+    for (const a of wAc) {
+      const aC = schoolCompact(a);
+      if ([...oAc].some((x) => schoolCompact(x) === aC) || oC.includes(aC)) {
+        score += 0.16;
+        break;
+      }
+    }
+    const places = schoolPlaceTokens(wRaw);
+    if (places.some((p) => o.includes(p) || oSet.has(p))) score += 0.12;
+
+    return Math.max(0, Math.min(1, score));
+  }
+
+  async function lookupSchoolMapping(profileSchool) {
+    const maps = await getSchoolMaps();
+    const list = maps[schoolMapHost()] || [];
+    let best = null;
+    for (const entry of list) {
+      if (!entry || !entry.to) continue;
+      const sFrom = scoreSchoolOption(entry.from || "", profileSchool);
+      const sTo = scoreSchoolOption(entry.to, profileSchool);
+      const s = Math.max(sFrom, sTo * 0.95);
+      if (!best || s > best.score) best = { score: s, to: entry.to };
+    }
+    return best && best.score >= 0.62 ? best.to : null;
+  }
+
+  async function saveSchoolMapping(profileSchool, optionLabel) {
+    const from = String(profileSchool || "").trim();
+    const to = String(optionLabel || "").trim();
+    if (!from || !to || to.length < 2) return;
+    const maps = await getSchoolMaps();
+    const host = schoolMapHost();
+    const list = Array.isArray(maps[host]) ? maps[host].slice() : [];
+    const normTo = to.toLowerCase();
+    const filtered = list.filter(
+      (e) =>
+        e &&
+        e.to &&
+        e.to.toLowerCase() !== normTo &&
+        scoreSchoolOption(e.from || "", from) < 0.85
+    );
+    filtered.unshift({ from, to, ts: Date.now() });
+    maps[host] = filtered.slice(0, 80);
+    await setSchoolMaps(maps);
+  }
+
+  function watchManualSchoolPick(el, profileSchool) {
+    if (!el || !profileSchool) return;
+    const root =
+      el.closest('[class*="select__container"]') ||
+      el.closest('[class*="select"]') ||
+      el.parentElement;
+    if (!root) return;
+    const started = Date.now();
+    let saved = false;
+    const trySave = async () => {
+      if (saved) return;
+      const label = readComboboxLabel(el);
+      if (!label || label.length < 2 || /^select/i.test(label)) return;
+      saved = true;
+      obs.disconnect();
+      clearInterval(poll);
+      await saveSchoolMapping(profileSchool, label);
+      toast("Tvarin: remembered this school for next time on this ATS.", 4200);
+    };
+    const obs = new MutationObserver(() => {
+      if (Date.now() - started > 8 * 60 * 1000) {
+        obs.disconnect();
+        clearInterval(poll);
+        return;
+      }
+      trySave();
+    });
+    obs.observe(root, { childList: true, subtree: true, characterData: true });
+    const poll = setInterval(trySave, 1200);
+    setTimeout(() => {
+      obs.disconnect();
+      clearInterval(poll);
+    }, 8 * 60 * 1000);
+  }
+
+  async function listSchoolOptions(el, typeahead) {
+    openCombobox(el);
+    await sleep(160);
+    if (typeahead) {
+      setNativeValue(el, typeahead);
+      el.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          data: typeahead,
+          inputType: "insertText",
+        })
+      );
+      await sleep(480);
+    } else {
+      await sleep(220);
+    }
+    let listbox = findListbox(el);
+    if (!listbox) {
+      openCombobox(el);
+      await sleep(280);
+      listbox = findListbox(el);
+    }
+    if (!listbox) return [];
+    return Array.from(listbox.querySelectorAll('[role="option"]'))
+      .map((node) => ({ node, text: (node.textContent || "").trim() }))
+      .filter(
+        (o) => o.text && !/^no options|loading|type to search/i.test(o.text)
+      );
+  }
+
+  async function pickBestSchoolFromQueries(el, profileSchool, queries, minScore) {
+    let best = { score: 0, text: "", query: "" };
+    for (const q of queries) {
+      const options = await listSchoolOptions(el, q);
+      for (const { text } of options) {
+        const score = scoreSchoolOption(text, profileSchool);
+        if (score > best.score) best = { score, text, query: q };
+      }
+      if (best.score >= SCHOOL_HIGH_SCORE) break;
+      closeCombobox(el);
+      await sleep(80);
+    }
+    if (best.score < minScore || !best.text) {
+      closeCombobox(el);
+      return null;
+    }
+    // Re-open with the winning query and click the exact label.
+    const options = await listSchoolOptions(el, best.query || best.text.slice(0, 32));
+    let target =
+      options.find((o) => o.text === best.text) ||
+      options.find((o) => o.text.toLowerCase() === best.text.toLowerCase()) ||
+      options.find((o) => scoreSchoolOption(o.text, profileSchool) >= best.score - 0.02);
+    if (!target) {
+      closeCombobox(el);
+      return null;
+    }
+    await clickComboboxOption(target.node);
+    return best.text;
+  }
+
+  async function fillSchoolCombobox(el, profileSchool) {
+    const wanted = String(profileSchool || "").trim();
+    if (!el || !wanted) return { ok: false };
+    if (comboboxHasValue(el)) return { ok: true, already: true };
+
+    const remembered = await lookupSchoolMapping(wanted);
+    if (remembered) {
+      const okExact = await pickComboboxOption(el, {
+        typeahead: remembered.slice(0, 48),
+        match: (t) => {
+          const a = t.toLowerCase();
+          const b = remembered.toLowerCase();
+          return a === b || a.includes(b) || b.includes(a);
+        },
+      });
+      if (okExact) return { ok: true, from: "memory" };
+      if (!comboboxHasValue(el)) {
+        const okScore = await pickBestSchoolFromQueries(
+          el,
+          wanted,
+          [remembered, ...schoolTypeaheadQueries(remembered), ...schoolTypeaheadQueries(wanted)],
+          0.72
+        );
+        if (okScore) return { ok: true, from: "memory-score" };
+      }
+    }
+
+    const queries = schoolTypeaheadQueries(wanted);
+    const picked = await pickBestSchoolFromQueries(
+      el,
+      wanted,
+      queries,
+      SCHOOL_MIN_SCORE
+    );
+    if (picked) {
+      await saveSchoolMapping(wanted, picked);
+      return { ok: true, from: "score", label: picked };
+    }
+
+    watchManualSchoolPick(el, wanted);
+    return { ok: false, miss: true };
   }
 
   function matchMonthOption(optionText, monthName) {
@@ -1100,9 +1780,10 @@
     }
   }
 
-  // Async pass: fill the comboboxes we can. Returns how many were set.
+  // Async pass: fill the comboboxes we can. Returns { filled, warnings }.
   async function fillComboboxes(items, profile, settings) {
     let filled = 0;
+    const warnings = [];
     const handled = new Set();
 
     async function fillKey(key, { typeahead, match } = {}) {
@@ -1143,28 +1824,62 @@
       }
     }
 
-    // Greenhouse Education: School / Degree / Discipline / start+end month.
-    await fillKey("school", {
-      typeahead: valueForKey(profile, "school"),
-      match: (t) => fuzzyOptionMatch(t, valueForKey(profile, "school")),
-    });
-    await fillKey("degree", {
-      typeahead: false,
-      match: (t) => matchDegreeOption(t, valueForKey(profile, "degree")),
-    });
-    await fillKey("discipline", {
-      typeahead: valueForKey(profile, "discipline"),
-      match: (t) => fuzzyOptionMatch(t, valueForKey(profile, "discipline")),
-    });
-    await fillKey("eduStartMonth", {
-      typeahead: false,
-      match: (t) => matchMonthOption(t, valueForKey(profile, "eduStartMonth")),
-    });
-    await fillKey("eduEndMonth", {
-      typeahead: false,
-      match: (t) => matchMonthOption(t, valueForKey(profile, "eduEndMonth")),
-    });
+    // State / province — Workday-style ISO labels ("IN-MH") via alias match.
+    if (profile.state) {
+      const stateItem = items.find(
+        (i) => i.key === "state" && isCombobox(i.el) && !handled.has(i.el) && isVisible(i.el)
+      );
+      if (stateItem) {
+        const match = matchStateOption(profile.state, profile.country);
+        const typeaheads = stateTypeaheadCandidates(profile.state, profile.country);
+        let ok = false;
+        for (const ta of typeaheads) {
+          ok = await pickComboboxOption(stateItem.el, { typeahead: ta, match });
+          if (ok) break;
+        }
+        if (!ok) ok = await pickComboboxOption(stateItem.el, { typeahead: false, match });
+        if (ok) {
+          filled++;
+          handled.add(stateItem.el);
+        }
+      }
+    }
 
+    // School / degree / discipline / edu months: Greenhouse multi-row filler owns these.
+    const greenhouseEdu =
+      !!document.getElementById("school--0") || !!document.getElementById("degree--0");
+    if (!greenhouseEdu) {
+      const schoolWanted = valueForKey(profile, "school");
+      const schoolItem = items.find(
+        (i) =>
+          i.key === "school" && isCombobox(i.el) && !handled.has(i.el) && isVisible(i.el)
+      );
+      if (schoolItem && schoolWanted) {
+        const schoolResult = await fillSchoolCombobox(schoolItem.el, schoolWanted);
+        handled.add(schoolItem.el);
+        if (schoolResult.ok && !schoolResult.already) filled++;
+        if (schoolResult.miss) {
+          warnings.push("School not in this list — pick once, we'll remember");
+        }
+      }
+
+      await fillKey("degree", {
+        typeahead: false,
+        match: (t) => matchDegreeOption(t, valueForKey(profile, "degree")),
+      });
+      await fillKey("discipline", {
+        typeahead: valueForKey(profile, "discipline"),
+        match: (t) => fuzzyOptionMatch(t, valueForKey(profile, "discipline")),
+      });
+      await fillKey("eduStartMonth", {
+        typeahead: false,
+        match: (t) => matchMonthOption(t, valueForKey(profile, "eduStartMonth")),
+      });
+      await fillKey("eduEndMonth", {
+        typeahead: false,
+        match: (t) => matchMonthOption(t, valueForKey(profile, "eduEndMonth")),
+      });
+    }
     // Optional, consent-gated: answer EEO/demographic questions as "decline".
     if (settings && settings.autoDeclineEEO) {
       for (const id of EEO_IDS) {
@@ -1179,7 +1894,7 @@
       }
     }
 
-    return filled;
+    return { filled, warnings };
   }
 
   // Some ATSs put their stable id/attribute on a wrapper, not the input itself.
@@ -1216,6 +1931,7 @@
     if (opts.forceCountryCode) ctx.hasCountryCodeField = true;
 
     let filled = 0;
+    const warnings = [];
     const handled = new Set();
     for (const { el, key } of knownItems) {
       // Comboboxes need the open-menu-and-click flow — skip here.
@@ -1226,9 +1942,11 @@
       }
     }
     filled += fillItems(items, profile, ctx, handled);
-    filled += await fillComboboxes(items, profile, settings);
+    const combo = await fillComboboxes(items, profile, settings);
+    filled += combo.filled || 0;
+    if (combo.warnings && combo.warnings.length) warnings.push(...combo.warnings);
     filled += await fillDateOfBirthFields(profile);
-    return { filled };
+    return { filled, warnings };
   }
 
   // Generic heuristic adapter — the fallback that works best-effort anywhere.
@@ -1242,29 +1960,230 @@
 
   // Greenhouse — stable ids; phone is always paired with a country selector,
   // so the phone box holds the national number only.
-  // Education uses react-select comboboxes (#school--0 …) plus year number inputs.
+  // Education: multi-row (#school--0, #school--1, …) via "Add another".
   const greenhouseAdapter = {
     name: "greenhouse",
     label: "Greenhouse",
-    fill(profile, settings) {
+    async fill(profile, settings) {
+      const eduResult = await fillGreenhouseEducations(profile);
       const known = collectKnown([
         ["#first_name", "firstName"],
         ["#last_name", "lastName"],
         ["#email", "email"],
         ["#phone", "phone"],
-        ["#school--0", "school"],
-        ["#degree--0", "degree"],
-        ["#discipline--0", "discipline"],
-        ["#start-month--0", "eduStartMonth"],
-        ["#start-year--0", "eduStartYear"],
-        ["#end-month--0", "eduEndMonth"],
-        ["#end-year--0", "eduEndYear"],
       ]);
-      return runAdapter(known, profile, settings, {
+      const result = await runAdapter(known, profile, settings, {
         forceCountryCode: !!document.querySelector("#country"),
       });
+      const warnings = [
+        ...(eduResult.warnings || []),
+        ...(result.warnings || []),
+      ];
+      return {
+        filled: (result.filled || 0) + (eduResult.filled || 0),
+        warnings,
+      };
     },
   };
+
+  function greenhouseEducationIndexCount() {
+    let n = 0;
+    while (document.getElementById(`school--${n}`) || document.getElementById(`degree--${n}`)) {
+      n++;
+    }
+    return n;
+  }
+
+  function findGreenhouseEducationAddAnother() {
+    const anchor =
+      document.getElementById("school--0") ||
+      document.getElementById("degree--0") ||
+      document.querySelector("#education, [id*='education' i], legend");
+    const scopes = [];
+    if (anchor) {
+      scopes.push(
+        anchor.closest("form"),
+        anchor.closest("fieldset"),
+        anchor.closest("section"),
+        anchor.closest('[class*="education" i]'),
+        anchor.parentElement && anchor.parentElement.parentElement,
+        anchor.parentElement
+      );
+    }
+    scopes.push(document);
+
+    const isAddAnother = (el) => {
+      if (!el || !isVisible(el)) return false;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      return (
+        t === "add another" ||
+        t === "add education" ||
+        t === "add another education" ||
+        /^add another\b/.test(t)
+      );
+    };
+
+    for (const scope of scopes) {
+      if (!scope || !scope.querySelectorAll) continue;
+      const candidates = scope.querySelectorAll(
+        "a, button, [role='button'], span[class*='link'], div[class*='link']"
+      );
+      for (const el of candidates) {
+        if (isAddAnother(el)) return el;
+      }
+    }
+    // Greenhouse sometimes nests the control as a plain clickable text node wrapper.
+    const all = document.querySelectorAll("a, button");
+    for (const el of all) {
+      if (isAddAnother(el)) return el;
+    }
+    return null;
+  }
+
+  async function ensureGreenhouseEducationRows(needed) {
+    let have = greenhouseEducationIndexCount();
+    if (have === 0) return 0;
+    let guard = 0;
+    while (have < needed && guard++ < 8) {
+      const btn = findGreenhouseEducationAddAnother();
+      if (!btn) break;
+      btn.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
+      );
+      btn.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window })
+      );
+      btn.click();
+      // Wait for the new school--N input to mount.
+      const target = have;
+      let appeared = false;
+      for (let i = 0; i < 20; i++) {
+        await sleep(150);
+        if (
+          document.getElementById(`school--${target}`) ||
+          document.getElementById(`degree--${target}`)
+        ) {
+          appeared = true;
+          break;
+        }
+      }
+      if (!appeared) break;
+      have = greenhouseEducationIndexCount();
+    }
+    return have;
+  }
+
+  async function fillGreenhouseEducationRow(index, edu) {
+    let filled = 0;
+    const warnings = [];
+    if (!edu) return { filled, warnings };
+
+    const schoolEl = resolveInput(document.getElementById(`school--${index}`));
+    const degreeEl = resolveInput(document.getElementById(`degree--${index}`));
+    const disciplineEl = resolveInput(document.getElementById(`discipline--${index}`));
+    const startMonthEl = resolveInput(document.getElementById(`start-month--${index}`));
+    const startYearEl = resolveInput(document.getElementById(`start-year--${index}`));
+    const endMonthEl = resolveInput(document.getElementById(`end-month--${index}`));
+    const endYearEl = resolveInput(document.getElementById(`end-year--${index}`));
+
+    const school = educationFieldValue(edu, "school");
+    if (schoolEl && school && isCombobox(schoolEl)) {
+      const res = await fillSchoolCombobox(schoolEl, school);
+      if (res.ok && !res.already) filled++;
+      if (res.miss) {
+        warnings.push(
+          index === 0
+            ? "School not in this list — pick once, we'll remember"
+            : `Education ${index + 1}: school not in this list — pick once, we'll remember`
+        );
+      }
+    } else if (schoolEl && school && fillField(schoolEl, school)) {
+      filled++;
+    }
+
+    const degree = educationFieldValue(edu, "degree");
+    if (degreeEl && degree && isCombobox(degreeEl)) {
+      if (
+        await pickComboboxOption(degreeEl, {
+          typeahead: false,
+          match: (t) => matchDegreeOption(t, degree),
+        })
+      ) {
+        filled++;
+      }
+    } else if (degreeEl && degree && fillField(degreeEl, degree)) {
+      filled++;
+    }
+
+    const discipline = educationFieldValue(edu, "discipline");
+    if (disciplineEl && discipline && isCombobox(disciplineEl)) {
+      if (
+        await pickComboboxOption(disciplineEl, {
+          typeahead: discipline,
+          match: (t) => fuzzyOptionMatch(t, discipline),
+        })
+      ) {
+        filled++;
+      }
+    } else if (disciplineEl && discipline && fillField(disciplineEl, discipline)) {
+      filled++;
+    }
+
+    const startMonth = educationFieldValue(edu, "eduStartMonth");
+    if (startMonthEl && startMonth && isCombobox(startMonthEl)) {
+      if (
+        await pickComboboxOption(startMonthEl, {
+          typeahead: false,
+          match: (t) => matchMonthOption(t, startMonth),
+        })
+      ) {
+        filled++;
+      }
+    }
+    const startYear = educationFieldValue(edu, "eduStartYear");
+    if (startYearEl && startYear && fillField(startYearEl, startYear)) filled++;
+
+    const endMonth = educationFieldValue(edu, "eduEndMonth");
+    if (endMonthEl && endMonth && isCombobox(endMonthEl)) {
+      if (
+        await pickComboboxOption(endMonthEl, {
+          typeahead: false,
+          match: (t) => matchMonthOption(t, endMonth),
+        })
+      ) {
+        filled++;
+      }
+    }
+    const endYear = educationFieldValue(edu, "eduEndYear");
+    if (endYearEl && endYear && fillField(endYearEl, endYear)) filled++;
+
+    return { filled, warnings };
+  }
+
+  async function fillGreenhouseEducations(profile) {
+    const list = listEducations(profile);
+    if (!list.length) return { filled: 0, warnings: [] };
+    // Only act when Greenhouse education widgets are on the page.
+    if (!document.getElementById("school--0") && !document.getElementById("degree--0")) {
+      return { filled: 0, warnings: [] };
+    }
+
+    const have = await ensureGreenhouseEducationRows(list.length);
+    const n = Math.min(list.length, Math.max(have, 1));
+    let filled = 0;
+    const warnings = [];
+    for (let i = 0; i < n; i++) {
+      const row = await fillGreenhouseEducationRow(i, list[i]);
+      filled += row.filled;
+      warnings.push(...row.warnings);
+    }
+    if (list.length > n) {
+      warnings.push(
+        `Saved ${list.length} educations — only ${n} row${n === 1 ? "" : "s"} on this form`
+      );
+    }
+    return { filled, warnings };
+  }
 
   // Lever — stable field names (verified on a live jobs.lever.co form).
   // Single "Full name" field; lone phone (gets the country code prepended).
@@ -1404,10 +2323,59 @@
   }
 
   function closeWorkdayPopup() {
+    // Escape once usually closes listboxes / moniker prompts; twice for nested Job Board.
     document.dispatchEvent(
-      new KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 })
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        code: "Escape",
+        keyCode: 27,
+        which: 27,
+      })
     );
-    if (document.activeElement) document.activeElement.blur();
+    document.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        code: "Escape",
+        keyCode: 27,
+        which: 27,
+      })
+    );
+    if (document.activeElement && typeof document.activeElement.blur === "function") {
+      document.activeElement.blur();
+    }
+  }
+
+  function workdayPopupOpen() {
+    return !!(
+      document.querySelector('[data-automation-id="responsiveMonikerPrompt"]') ||
+      document.querySelector('[role="listbox"][aria-label*="Options" i]') ||
+      Array.from(document.querySelectorAll('[role="listbox"]')).some((el) => {
+        const r = el.getBoundingClientRect();
+        // Ignore the tiny "items selected" chip listboxes.
+        return r.height > 80 && r.width > 80;
+      })
+    );
+  }
+
+  async function dismissWorkdayPopup() {
+    for (let i = 0; i < 3 && workdayPopupOpen(); i++) {
+      // Prefer the explicit Done button on Autodesk multiselect prompts.
+      const done = Array.from(document.querySelectorAll("button")).find(
+        (b) => isVisible(b) && /^done$/i.test((b.textContent || "").trim())
+      );
+      if (done) {
+        fireWorkdayClick(done);
+        await sleep(280);
+        if (!workdayPopupOpen()) return true;
+      }
+      closeWorkdayPopup();
+      await sleep(180);
+    }
+    return !workdayPopupOpen();
   }
 
   // Workday PromptSelect: open widget → optional typeahead → click option.
@@ -1422,7 +2390,9 @@
       match(shownBefore) &&
       !/select one|select an option|search|choose/i.test(shownBefore)
     ) {
-      return true; // already set
+      // Already set — still dismiss a leftover open list (country listbox stays open).
+      if (workdayPopupOpen()) await dismissWorkdayPopup();
+      return true;
     }
 
     trigger.focus();
@@ -1531,7 +2501,7 @@
 
     const target = ranked[0] && ranked[0].o;
     if (!target) {
-      closeWorkdayPopup();
+      await dismissWorkdayPopup();
       return false;
     }
 
@@ -1543,39 +2513,51 @@
 
     function fireClick(el) {
       el.scrollIntoView({ block: "nearest" });
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
         el.dispatchEvent(
-          new MouseEvent(type, { bubbles: true, cancelable: true, view: window })
+          new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x,
+            clientY: y,
+            buttons: 1,
+            detail: 1,
+          })
         );
       }
+      if (typeof el.click === "function") el.click();
     }
 
     fireClick(clickEl);
     await sleep(220);
 
-    // If the trigger still doesn't show the value, try Enter (active highlighted row).
-    const shownAfter = (trigger.value || trigger.textContent || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!match(shownAfter)) {
-      const enterTarget = search || document.activeElement || trigger;
-      enterTarget.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-        })
-      );
-      await sleep(220);
-    }
-
-    const finalShown = (trigger.value || trigger.textContent || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (match(finalShown)) return true;
+    // Country listboxes often highlight on click but only commit on Enter.
+    const enterTarget = clickEl || search || document.activeElement || trigger;
+    enterTarget.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+      })
+    );
+    enterTarget.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+      })
+    );
+    await sleep(220);
 
     // Last resort: click the promptOption child if we hit the row already.
     const labelChild = clickEl.querySelector(
@@ -1589,7 +2571,9 @@
     const verified = match(
       (trigger.value || trigger.textContent || "").replace(/\s+/g, " ").trim()
     );
-    if (!verified) closeWorkdayPopup();
+    // State PromptSelect auto-closes; country listbox / source moniker often stay open
+    // after highlight — always dismiss so the next field isn't blocked.
+    await dismissWorkdayPopup();
     return verified;
   }
 
@@ -1623,6 +2607,386 @@
   async function pickWorkdayById(id, opts) {
     const trigger = workdayTriggerFor(id);
     return pickWorkdayDropdown(trigger, opts);
+  }
+
+  function workdayOptionLabel(o) {
+    return (
+      o.getAttribute("data-automation-label") ||
+      o.getAttribute("aria-label") ||
+      o.textContent ||
+      ""
+    )
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\s+(not )?checked$/i, "");
+  }
+
+  function listWorkdayPromptOptions() {
+    // Options often render in a body-level portal, not inside the field wrapper.
+    // Prefer the open popup root, but always fall back to a document-wide scan.
+    const portal =
+      document.querySelector('[data-automation-id="responsiveMonikerPrompt"]') ||
+      document.querySelector('[data-uxi-widget-type="prompt"]') ||
+      document.querySelector('[data-automation-id="menuItem"][role="option"]')?.closest(
+        '[data-uxi-widget-type], [data-automation-id*="prompt"], [role="listbox"]'
+      ) ||
+      null;
+    const roots = portal ? [portal, document] : [document];
+    const optionSelectors = [
+      '[data-automation-id="menuItem"][role="option"]',
+      '[data-automation-id="promptOption"]',
+      '[data-automation-id="promptLeafNode"]',
+      '[data-automation-id*="promptOption"]',
+      '[data-uxi-widget-type="multiselectlistitem"]',
+      '[data-uxi-widget-type="selectinputlistitem"]',
+      '[role="option"]',
+    ];
+
+    for (const root of roots) {
+      for (const sel of optionSelectors) {
+        const options = Array.from(root.querySelectorAll(sel)).filter((o) => {
+          if (o.getAttribute("data-automation-id") === "selectedItem") return false;
+          if (o.closest('[data-automation-id="selectedItemList"]')) return false;
+          const t = workdayOptionLabel(o);
+          if (!t) return false;
+          // Skip the search box row if it ever matches as an option.
+          if (/^search$/i.test(t)) return false;
+          const r = o.getBoundingClientRect();
+          if (!(r.width > 0 || r.height > 0 || o.offsetParent !== null)) return false;
+          // Must be in (or near) the viewport-ish popup — ignore off-page ghosts.
+          if (r.bottom < 0 || r.top > window.innerHeight + 50) return false;
+          return true;
+        });
+        if (options.length) {
+          // De-dupe nested promptOption inside menuItem (keep the outer row).
+          const seen = new Set();
+          const rows = [];
+          for (const o of options) {
+            const row =
+              o.closest('[data-automation-id="menuItem"]') ||
+              o.closest('[role="option"]') ||
+              o;
+            if (seen.has(row)) continue;
+            seen.add(row);
+            rows.push({ o: row, t: workdayOptionLabel(row) });
+          }
+          if (rows.length) return rows;
+        }
+      }
+    }
+    return [];
+  }
+
+  function fireWorkdayClick(el) {
+    if (!el) return;
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } catch (_) {}
+    try {
+      el.focus({ preventScroll: true });
+    } catch (_) {}
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      buttons: 1,
+      detail: 1,
+      clientX: x,
+      clientY: y,
+    };
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      el.dispatchEvent(new MouseEvent(type, opts));
+    }
+    if (typeof el.click === "function") el.click();
+  }
+
+  function workdaySideCharm(row) {
+    if (!row) return null;
+    const svg = row.querySelector("svg.wd-icon-chevron-right-small");
+    if (!svg) return null;
+    // Autodesk: click the chevron wrapper (hassidecharm), not the label — label only focuses.
+    return svg.parentElement && svg.parentElement.parentElement
+      ? svg.parentElement.parentElement
+      : svg.parentElement;
+  }
+
+  async function openWorkdayPrompt(trigger) {
+    if (!trigger || !isVisible(trigger)) return false;
+    closeWorkdayPopup();
+    await sleep(150);
+    trigger.focus();
+    fireWorkdayClick(trigger);
+    if (
+      trigger.matches("input") ||
+      trigger.getAttribute("data-uxi-widget-type") === "selectinput"
+    ) {
+      await sleep(80);
+      trigger.click();
+    }
+    await sleep(450);
+    return (
+      listWorkdayPromptOptions().length > 0 ||
+      !!document.querySelector('[data-automation-id="responsiveMonikerPrompt"]')
+    );
+  }
+
+  async function typeWorkdayPromptSearch(text) {
+    // Prefer the search inside the open prompt (id often "selectInputId-"), not the field.
+    const promptSearch =
+      document.querySelector(
+        '[data-automation-id="responsiveMonikerPrompt"] input[placeholder*="Search" i]'
+      ) ||
+      document.getElementById("selectInputId-") ||
+      document.querySelector(
+        '[data-automation-id="promptSearchBox"] input, [data-automation-id="promptSearchInput"]'
+      );
+    const search = promptSearch;
+    if (!search) {
+      await sleep(120);
+      return null;
+    }
+    search.focus();
+    setNativeValue(search, "");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(50);
+    if (text) {
+      setNativeValue(search, text);
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.dispatchEvent(
+        new KeyboardEvent("keyup", {
+          bubbles: true,
+          key: text.slice(-1) || "a",
+          keyCode: 65,
+        })
+      );
+      await sleep(650);
+    } else {
+      await sleep(250);
+    }
+    return search;
+  }
+
+  async function clickWorkdayPromptOption(match, { drill = false } = {}) {
+    const options = listWorkdayPromptOptions().filter(({ t }) => match(t));
+    if (!options.length) return false;
+    options.sort((a, b) => a.t.length - b.t.length);
+    const target = options[0].o;
+    if (drill) {
+      const charm = workdaySideCharm(target);
+      if (charm) {
+        fireWorkdayClick(charm);
+        await sleep(500);
+        return true;
+      }
+    }
+    const labelEl =
+      target.querySelector('[data-automation-id="promptOption"]') ||
+      target.querySelector("[data-automation-label]") ||
+      target;
+    fireWorkdayClick(labelEl);
+    await sleep(280);
+    return true;
+  }
+
+  function sourceShowsLinkedIn(trigger) {
+    const wrap =
+      document.querySelector('[data-automation-id="formField-source"]') ||
+      (trigger && trigger.closest('[data-automation-id^="formField-"]')) ||
+      (trigger && trigger.parentElement);
+    if (!wrap) return false;
+    // Selected chips live in selectedItemList — ignore the open options popup.
+    const selected = wrap.querySelectorAll(
+      '[data-automation-id="selectedItemList"] [data-automation-id="menuItem"], [data-automation-id="selectedItemList"] [data-automation-id="selectedItem"], [data-automation-id="selectedItem"]'
+    );
+    if (
+      Array.from(selected).some((el) => /\blinkedin\b/i.test(el.textContent || ""))
+    ) {
+      return true;
+    }
+    // Fallback: "1 item selected" / chip text next to the field.
+    const list = wrap.querySelector('[data-automation-id="selectedItemList"]');
+    return !!(list && /\blinkedin\b/i.test(list.textContent || ""));
+  }
+
+  async function waitForWorkdayOptions(predicate, ms = 1800) {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      const opts = listWorkdayPromptOptions();
+      if (predicate(opts)) return opts;
+      await sleep(150);
+    }
+    return listWorkdayPromptOptions();
+  }
+
+  async function scrollWorkdayListForOption(match, ms = 5000) {
+    const list = document.querySelector('[data-automation-id="activeListContainer"]');
+    const start = Date.now();
+    let hit = listWorkdayPromptOptions().find(({ t }) => match(t));
+    if (hit) return hit.o;
+    if (!list) return null;
+
+    const max = Math.max(list.scrollHeight || 0, 2500);
+    for (let y = 0; y <= max && Date.now() - start < ms; y += 120) {
+      list.scrollTop = y;
+      list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await sleep(35);
+      hit = listWorkdayPromptOptions().find(({ t }) => match(t));
+      if (hit) return hit.o;
+    }
+    // Keyboard fallback if scroll didn't virtualize.
+    const first = listWorkdayPromptOptions()[0];
+    if (first && first.o) {
+      try {
+        first.o.focus();
+      } catch (_) {}
+      fireWorkdayClick(first.o);
+      await sleep(80);
+    }
+    for (let i = 0; i < 80 && Date.now() - start < ms; i++) {
+      const active = document.activeElement || (first && first.o);
+      if (active) {
+        active.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            key: "ArrowDown",
+            code: "ArrowDown",
+            keyCode: 40,
+            which: 40,
+          })
+        );
+      }
+      await sleep(30);
+      hit = listWorkdayPromptOptions().find(({ t }) => match(t));
+      if (hit) return hit.o;
+    }
+    return null;
+  }
+
+  async function clickWorkdayDone() {
+    return dismissWorkdayPopup();
+  }
+
+  // Autodesk live form (wd1): hierarchical multiselect.
+  // - Root rows with svg.wd-icon-chevron-right-small must be opened via the chevron
+  //   (clicking the label only focuses). Search does NOT find LinkedIn at root.
+  // - Under Job Board, LinkedIn is mid virtualized list — scroll to it, then Done.
+  async function fillWorkdaySourceLinkedIn() {
+    let trigger =
+      document.getElementById("source--source") ||
+      workdayTriggerFor("formField-source") ||
+      workdayTriggerFor("source");
+    if (!trigger || !isVisible(trigger)) {
+      const label = Array.from(document.querySelectorAll("label, h3, h4, legend")).find((el) =>
+        /how did you hear/i.test(el.textContent || "")
+      );
+      if (label) {
+        const wrap =
+          label.closest('[data-automation-id^="formField-"]') || label.parentElement;
+        trigger =
+          (wrap &&
+            wrap.querySelector(
+              'input#source--source, input[data-uxi-widget-type="selectinput"], input[id*="source" i]'
+            )) ||
+          null;
+      }
+    }
+    if (!trigger || !isVisible(trigger)) return false;
+    if (sourceShowsLinkedIn(trigger)) {
+      if (workdayPopupOpen()) await dismissWorkdayPopup();
+      return true;
+    }
+
+    const leafMatch = (t) => /^linkedin$/i.test(String(t || "").trim());
+    const parents = [
+      { match: (t) => /^job\s*boards?$/i.test(String(t || "").trim()), name: "Job Board" },
+      {
+        match: (t) => /^social\s*networking$/i.test(String(t || "").trim()),
+        name: "Social Networking",
+      },
+      { match: (t) => /^socially$/i.test(String(t || "").trim()), name: "Socially" },
+      { match: (t) => /^social\s*media$/i.test(String(t || "").trim()), name: "Social Media" },
+    ];
+
+    async function selectLinkedInLeaf(leafEl) {
+      if (!leafEl) return false;
+      const opt =
+        leafEl.querySelector('[data-automation-id="promptOption"]') || leafEl;
+      const radio = leafEl.querySelector(
+        '[data-automation-id="radioBtn"], input[type="radio"]'
+      );
+      // Radio leaf: click radio then label so the chip commits.
+      if (radio) fireWorkdayClick(radio);
+      fireWorkdayClick(opt);
+      fireWorkdayClick(leafEl);
+      await sleep(350);
+      // Nested Job Board view stays open until Done (unlike State PromptSelect).
+      await dismissWorkdayPopup();
+      await sleep(200);
+      return sourceShowsLinkedIn(trigger);
+    }
+
+    if (!(await openWorkdayPrompt(trigger))) return false;
+    // Clear any filter on the prompt search (not the field itself).
+    await typeWorkdayPromptSearch("");
+    await waitForWorkdayOptions((opts) => opts.length > 0, 1500);
+
+    // Direct leaf if present at this level.
+    {
+      const leaf = await scrollWorkdayListForOption(leafMatch, 1500);
+      if (leaf && (await selectLinkedInLeaf(leaf))) return true;
+    }
+
+    for (const parent of parents) {
+      // Ensure we're on the category root.
+      if (!listWorkdayPromptOptions().some(({ t }) => parent.match(t))) {
+        const back = document.querySelector('[data-automation-id="backButton"]');
+        if (back) {
+          fireWorkdayClick(back);
+          await sleep(350);
+        }
+      }
+      if (!listWorkdayPromptOptions().some(({ t }) => parent.match(t))) {
+        await dismissWorkdayPopup();
+        await sleep(120);
+        if (!(await openWorkdayPrompt(trigger))) continue;
+        await typeWorkdayPromptSearch("");
+        await waitForWorkdayOptions((opts) => opts.some(({ t }) => parent.match(t)), 1200);
+      }
+      if (!listWorkdayPromptOptions().some(({ t }) => parent.match(t))) continue;
+
+      // CRITICAL: click chevron side-charm, not the row text.
+      if (!(await clickWorkdayPromptOption(parent.match, { drill: true }))) continue;
+
+      await waitForWorkdayOptions(
+        (opts) =>
+          opts.length > 0 &&
+          (opts.some(({ t }) => leafMatch(t)) || !opts.some(({ t }) => parent.match(t))),
+        2000
+      );
+
+      // Autodesk Job Board list does not filter on "LinkedIn" — scroll the virtual list.
+      let leafEl = await scrollWorkdayListForOption(leafMatch, 6000);
+      if (!leafEl) {
+        await typeWorkdayPromptSearch("LinkedIn");
+        leafEl = await scrollWorkdayListForOption(leafMatch, 2000);
+        await typeWorkdayPromptSearch("");
+      }
+      if (!leafEl) {
+        const back = document.querySelector('[data-automation-id="backButton"]');
+        if (back) fireWorkdayClick(back);
+        await sleep(300);
+        continue;
+      }
+
+      if (await selectLinkedInLeaf(leafEl)) return true;
+    }
+
+    await dismissWorkdayPopup();
+    return sourceShowsLinkedIn(trigger);
   }
 
   // Prefer first matching selector; supports modern + legacy Workday id schemes.
@@ -1668,6 +3032,214 @@
         (a) => s === a || s.startsWith(a + " ") || s.startsWith(a + "(") || s.startsWith(a + ",")
       );
     };
+  }
+
+  // Fold accents so Workday's "Mahārāshtra" still matches profile "Maharashtra".
+  function foldStateText(s) {
+    return String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // Workday India (and many tenants) list regions as ISO codes: "IN-MH", "MH",
+  // or odd official spellings (Orissa, Uttaranchal). Expand profile state → aliases.
+  const IN_STATE_ALIASES = {
+    "andaman and nicobar islands": ["an", "in-an", "andaman", "andaman nicobar"],
+    "andhra pradesh": ["ap", "in-ap"],
+    "arunachal pradesh": ["ar", "in-ar"],
+    assam: ["as", "in-as"],
+    bihar: ["br", "in-br"],
+    chandigarh: ["ch", "in-ch", "chd"],
+    chhattisgarh: ["ct", "in-ct", "cg", "chattisgarh"],
+    "dadra and nagar haveli and daman and diu": [
+      "dh",
+      "in-dh",
+      "dn",
+      "in-dn",
+      "dd",
+      "in-dd",
+      "dadra and nagar haveli",
+      "daman and diu",
+      "dnh",
+      "dnhdd",
+    ],
+    delhi: ["dl", "in-dl", "nct of delhi", "nct delhi", "new delhi", "delhi nct"],
+    goa: ["ga", "in-ga"],
+    gujarat: ["gj", "in-gj", "guj"],
+    haryana: ["hr", "in-hr"],
+    "himachal pradesh": ["hp", "in-hp"],
+    "jammu and kashmir": ["jk", "in-jk"],
+    "jammu & kashmir": ["jk", "in-jk", "jammu and kashmir"],
+    jharkhand: ["jh", "in-jh"],
+    karnataka: ["ka", "in-ka", "krn"],
+    kerala: ["kl", "in-kl", "ker"],
+    ladakh: ["la", "in-la"],
+    lakshadweep: ["ld", "in-ld", "lkp"],
+    "madhya pradesh": ["mp", "in-mp"],
+    maharashtra: ["mh", "in-mh", "mah"],
+    manipur: ["mn", "in-mn", "mnp"],
+    meghalaya: ["ml", "in-ml", "meg"],
+    mizoram: ["mz", "in-mz", "miz"],
+    nagaland: ["nl", "in-nl", "nld"],
+    odisha: ["or", "in-or", "od", "orissa"],
+    orissa: ["or", "in-or", "od", "odisha"],
+    puducherry: ["py", "in-py", "pdy", "pondicherry"],
+    pondicherry: ["py", "in-py", "puducherry"],
+    punjab: ["pb", "in-pb"],
+    rajasthan: ["rj", "in-rj", "raj"],
+    sikkim: ["sk", "in-sk", "skm"],
+    "tamil nadu": ["tn", "in-tn", "tamilnadu"],
+    telangana: ["tg", "in-tg", "ts", "in-ts"],
+    tripura: ["tr", "in-tr", "trp"],
+    "uttar pradesh": ["up", "in-up"],
+    uttarakhand: ["ut", "in-ut", "uk", "ua", "uttaranchal"],
+    uttaranchal: ["ut", "in-ut", "uk", "ua", "uttarakhand"],
+    "west bengal": ["wb", "in-wb"],
+  };
+
+  const US_STATE_ALIASES = {
+    alabama: ["al", "us-al"],
+    alaska: ["ak", "us-ak"],
+    arizona: ["az", "us-az"],
+    arkansas: ["ar", "us-ar"],
+    california: ["ca", "us-ca"],
+    colorado: ["co", "us-co"],
+    connecticut: ["ct", "us-ct"],
+    delaware: ["de", "us-de"],
+    florida: ["fl", "us-fl"],
+    georgia: ["ga", "us-ga"],
+    hawaii: ["hi", "us-hi"],
+    idaho: ["id", "us-id"],
+    illinois: ["il", "us-il"],
+    indiana: ["in", "us-in"],
+    iowa: ["ia", "us-ia"],
+    kansas: ["ks", "us-ks"],
+    kentucky: ["ky", "us-ky"],
+    louisiana: ["la", "us-la"],
+    maine: ["me", "us-me"],
+    maryland: ["md", "us-md"],
+    massachusetts: ["ma", "us-ma"],
+    michigan: ["mi", "us-mi"],
+    minnesota: ["mn", "us-mn"],
+    mississippi: ["ms", "us-ms"],
+    missouri: ["mo", "us-mo"],
+    montana: ["mt", "us-mt"],
+    nebraska: ["ne", "us-ne"],
+    nevada: ["nv", "us-nv"],
+    "new hampshire": ["nh", "us-nh"],
+    "new jersey": ["nj", "us-nj"],
+    "new mexico": ["nm", "us-nm"],
+    "new york": ["ny", "us-ny"],
+    "north carolina": ["nc", "us-nc"],
+    "north dakota": ["nd", "us-nd"],
+    ohio: ["oh", "us-oh"],
+    oklahoma: ["ok", "us-ok"],
+    oregon: ["or", "us-or"],
+    pennsylvania: ["pa", "us-pa"],
+    "rhode island": ["ri", "us-ri"],
+    "south carolina": ["sc", "us-sc"],
+    "south dakota": ["sd", "us-sd"],
+    tennessee: ["tn", "us-tn"],
+    texas: ["tx", "us-tx"],
+    utah: ["ut", "us-ut"],
+    vermont: ["vt", "us-vt"],
+    virginia: ["va", "us-va"],
+    washington: ["wa", "us-wa"],
+    "west virginia": ["wv", "us-wv"],
+    wisconsin: ["wi", "us-wi"],
+    wyoming: ["wy", "us-wy"],
+    "district of columbia": ["dc", "us-dc", "washington dc", "washington d c"],
+  };
+
+  function expandStateAliases(rawState, country) {
+    const folded = foldStateText(rawState);
+    if (!folded) return [];
+    const out = new Set([folded, folded.replace(/\s/g, "")]);
+
+    // Accept "IN-MH" / "IN_MH" / "MH" typed in the profile.
+    const iso = folded.match(/^(?:in|us)\s*([a-z]{2})$/);
+    if (iso) out.add(iso[1]);
+    const bare = folded.match(/^([a-z]{2})$/);
+    if (bare) out.add(bare[1]);
+
+    const countryFold = foldStateText(country);
+    const tables = [];
+    if (!countryFold || /india|\bin\b/.test(countryFold) || folded.startsWith("in ")) {
+      tables.push(IN_STATE_ALIASES);
+    }
+    if (
+      !countryFold ||
+      /united states|\busa\b|\bus\b/.test(countryFold) ||
+      folded.startsWith("us ")
+    ) {
+      tables.push(US_STATE_ALIASES);
+    }
+    if (!tables.length) tables.push(IN_STATE_ALIASES, US_STATE_ALIASES);
+
+    for (const table of tables) {
+      for (const [name, codes] of Object.entries(table)) {
+        const nameFold = foldStateText(name);
+        const codeFolds = codes.map(foldStateText);
+        const hit =
+          folded === nameFold ||
+          codeFolds.includes(folded) ||
+          codeFolds.includes(folded.replace(/\s/g, "-")) ||
+          codeFolds.includes(folded.replace(/\s/g, ""));
+        if (!hit) continue;
+        out.add(nameFold);
+        out.add(nameFold.replace(/\s/g, ""));
+        for (const c of codeFolds) {
+          out.add(c);
+          // Also "in mh" from "in-mh"
+          out.add(c.replace(/-/g, " "));
+        }
+      }
+    }
+    return Array.from(out).filter(Boolean);
+  }
+
+  function matchStateOption(profileState, country) {
+    const aliases = expandStateAliases(profileState, country);
+    return (t) => {
+      const s = foldStateText(t);
+      if (!s || !aliases.length) return false;
+      if (aliases.some((a) => s === a)) return true;
+      // "IN-MH" / "MH - Maharashtra" / "Maharashtra (IN-MH)"
+      if (aliases.some((a) => a.length >= 2 && (s.includes(a) || a.includes(s)))) {
+        // Guard short codes: require code as its own token ("mh" in "in mh", not inside another word).
+        return aliases.some((a) => {
+          if (a.length <= 2) {
+            return new RegExp(`(?:^|\\s)${a}(?:\\s|$)`).test(s);
+          }
+          return s === a || s.includes(a) || a.includes(s);
+        });
+      }
+      return false;
+    };
+  }
+
+  function stateTypeaheadCandidates(profileState, country) {
+    const aliases = expandStateAliases(profileState, country);
+    const raw = String(profileState || "").trim();
+    const preferred = [];
+    if (raw) preferred.push(raw);
+    // Prefer full names, then ISO (IN-MH), then short (MH).
+    const names = aliases.filter((a) => a.length > 3 && !/^(in|us)\s/.test(a));
+    const isos = aliases.filter((a) => /^(in|us)\s[a-z]{2}$/.test(a) || /^(in|us)-[a-z]{2}$/.test(a));
+    const shorts = aliases.filter((a) => /^[a-z]{2}$/.test(a));
+    for (const list of [names, isos.map((a) => a.replace(/\s/g, "-").toUpperCase()), shorts.map((a) => a.toUpperCase())]) {
+      for (const x of list) {
+        if (x && !preferred.some((p) => foldStateText(p) === foldStateText(x))) {
+          preferred.push(x);
+        }
+      }
+    }
+    return preferred.slice(0, 6);
   }
 
   async function fillWorkdayEEODecline() {
@@ -1794,77 +3366,51 @@
     }
 
     if (profile.state) {
-      const want = profile.state.toLowerCase().trim();
-      const opts = {
-        typeahead: profile.state,
-        match: (t) => {
-          const s = t.toLowerCase().trim();
-          return s === want || s.startsWith(want);
-        },
-      };
-      for (const id of [
+      const match = matchStateOption(profile.state, profile.country);
+      const typeaheads = stateTypeaheadCandidates(profile.state, profile.country);
+      const stateIds = [
         "formField-countryRegion",
+        "formField-address--countryRegion",
+        "address--countryRegion",
         "formField-province",
         "formField-state",
+        "formField-region",
         "addressSection_countryRegion_province",
         "addressSection_province",
+        "address--region",
         "province",
         "state",
         "countryRegion",
-      ]) {
-        if (await pickWorkdayById(id, opts)) {
-          filled++;
+        "region",
+      ];
+      // Resolve the visible state/region control once, then try name → IN-MH → MH.
+      let trigger = null;
+      for (const id of stateIds) {
+        const t = workdayTriggerFor(id);
+        if (t && isVisible(t)) {
+          trigger = t;
           break;
         }
       }
-    }
-
-    // Source ("How did you hear?") — hierarchical categories on some tenants
-    // (Socially → LinkedIn). Try LinkedIn first, then Socially as a parent.
-    {
-      const sourceIds = ["formField-source", "source"];
-      let sourceOk = false;
-      for (const id of sourceIds) {
-        if (
-          await pickWorkdayById(id, {
-            typeahead: "LinkedIn",
-            match: (t) => /linkedin/i.test(t),
-          })
-        ) {
-          sourceOk = true;
-          break;
-        }
-      }
-      if (!sourceOk) {
-        for (const id of sourceIds) {
-          if (
-            await pickWorkdayById(id, {
-              typeahead: "Socially",
-              match: (t) => /^socially$/i.test(t.trim()),
-            })
-          ) {
-            // After picking a parent category, try LinkedIn leaf if it appears.
-            await sleep(350);
-            const leaf = Array.from(
-              document.querySelectorAll(
-                '[data-automation-id="menuItem"][role="option"], [data-automation-id="promptOption"]'
-              )
-            ).find((o) =>
-              /linkedin/i.test(
-                o.getAttribute("data-automation-label") || o.textContent || ""
-              )
-            );
-            if (leaf) {
-              leaf.click();
-              await sleep(150);
-            }
-            sourceOk = true;
+      if (trigger) {
+        let stateOk = false;
+        for (const ta of typeaheads) {
+          if (await pickWorkdayDropdown(trigger, { typeahead: ta, match })) {
+            stateOk = true;
             break;
           }
         }
+        if (!stateOk) {
+          stateOk = await pickWorkdayDropdown(trigger, { typeahead: "", match });
+        }
+        if (stateOk) filled++;
       }
-      if (sourceOk) filled++;
     }
+
+    // Source ("How did you hear?") — often hierarchical:
+    // Autodesk: Job Board → LinkedIn (search won't find LinkedIn directly).
+    // Others: Socially → LinkedIn, or LinkedIn as a top-level option.
+    if (await fillWorkdaySourceLinkedIn()) filled++;
 
     // "Previously worked here?" — default No (safe; never invents employment).
     const prevNo = document.querySelector(
@@ -2414,6 +3960,13 @@
     let filled = 0;
     document.querySelectorAll("textarea, input[type='text']").forEach((el) => {
       if (!isVisible(el) || (el.value && el.value.trim())) return;
+      // Experience panels have dedicated filler (title/company/dates/role).
+      if (
+        el.id &&
+        (/^workExperience-\d+--/.test(el.id) || /^education-\d+--/.test(el.id))
+      ) {
+        return;
+      }
       const ctx = getFieldContext(el);
       if (/linkedin/.test(ctx) && profile.linkedin) {
         if (fillField(el, profile.linkedin)) filled++;
@@ -2426,20 +3979,11 @@
       } else if (/(about you|summary|profile|biography)/.test(ctx) && profile.about) {
         if (fillField(el, profile.about)) filled++;
       } else if (
-        /(work experience|experience description|role description|job description|experience summary)/.test(
-          ctx
-        ) &&
+        /role description/.test(ctx) &&
         (profile.experience || primaryExperience(profile))
       ) {
-        const exp = primaryExperience(profile);
-        const bullets =
-          exp && Array.isArray(exp.bullets)
-            ? exp.bullets.filter(Boolean).map((b) => `• ${b}`).join("\n")
-            : "";
         const text =
-          (exp &&
-            [exp.summary, bullets].filter(Boolean).join("\n").trim()) ||
-          profile.experience;
+          experienceRoleText(primaryExperience(profile)) || profile.experience || "";
         if (text && fillField(el, text)) filled++;
       } else if (/projects?/.test(ctx) && profile.projects) {
         if (fillField(el, profile.projects)) filled++;
@@ -2608,11 +4152,812 @@
   // Per Fill-run guards so Experience extras never loop-stack on the same step.
   let workdayExpExtrasDoneFor = "";
 
+  function workdaySectionHeadings() {
+    return Array.from(document.querySelectorAll("[id$='-section']")).filter(
+      (el) => el.id && /-section$/.test(el.id)
+    );
+  }
+
+  function workdayNextSectionHeading(heading) {
+    const heads = workdaySectionHeadings();
+    const i = heads.indexOf(heading);
+    return i >= 0 ? heads[i + 1] || null : null;
+  }
+
+  // True when el sits in [heading, nextHeading) — never borrow another section's Add.
+  function workdayNodeInSection(el, heading, nextHeading) {
+    if (!el || !heading) return false;
+    if (el === heading || heading.contains(el)) return true;
+    const pos = heading.compareDocumentPosition(el);
+    if (!(pos & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+    if (!nextHeading) return true;
+    if (el === nextHeading || nextHeading.contains(el)) return false;
+    return !!(el.compareDocumentPosition(nextHeading) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+
+  function findWorkdaySectionAddButton(sectionId) {
+    const heading = document.getElementById(sectionId);
+    if (!heading) return null;
+    const next = workdayNextSectionHeading(heading);
+    const candidates = Array.from(
+      document.querySelectorAll(
+        '[data-automation-id="add-button"], button, a[role="button"], div[role="button"]'
+      )
+    ).filter(
+      (el) => isVisible(el) && workdayNodeInSection(el, heading, next)
+    );
+
+    const byAuto = candidates.find(
+      (el) => (el.getAttribute("data-automation-id") || "") === "add-button"
+    );
+    if (byAuto) return byAuto;
+
+    return (
+      candidates.find((el) => {
+        const t = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        return t === "add" || t === "add another" || /^add another\b/.test(t);
+      }) || null
+    );
+  }
+
+  function countWorkdayIndexed(prefix, field) {
+    const indexes = [];
+    for (let i = 0; i < 12; i++) {
+      if (
+        (field && document.getElementById(`${prefix}-${i}--${field}`)) ||
+        document.querySelector(`[id^="${CSS.escape(prefix + "-" + i + "--")}"]`)
+      ) {
+        indexes.push(i);
+      }
+    }
+    if (!indexes.length) return { count: 0, start: 0, indexes: [] };
+    return { count: indexes.length, start: indexes[0], indexes };
+  }
+
+  // Prefer the tightest ancestor that only contains this index's fields.
+  // Shared panelSet wrappers include every Work Experience / Education row — using
+  // those made querySelector always hit row 0 (dates, school fallbacks, etc.).
+  function workdayPanelRoot(prefix, index) {
+    const probe =
+      document.getElementById(`${prefix}-${index}--jobTitle`) ||
+      document.getElementById(`${prefix}-${index}--companyName`) ||
+      document.getElementById(`${prefix}-${index}--school`) ||
+      document.getElementById(`${prefix}-${index}--degree`) ||
+      document.getElementById(`${prefix}-${index}--fieldOfStudy`) ||
+      document.querySelector(
+        `[id^="${CSS.escape(prefix + "-" + index + "--")}"]`
+      );
+    if (!probe) return null;
+
+    const indexRe = new RegExp(
+      `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)--`
+    );
+    function indexesIn(node) {
+      const set = new Set();
+      if (!node) return set;
+      if (node.id) {
+        const m = node.id.match(indexRe);
+        if (m) set.add(Number(m[1]));
+      }
+      node.querySelectorAll(`[id^="${CSS.escape(prefix + "-")}"]`).forEach((el) => {
+        const m = el.id.match(indexRe);
+        if (m) set.add(Number(m[1]));
+      });
+      return set;
+    }
+
+    let best = null;
+    let node = probe;
+    while (node && node !== document.body) {
+      const idxs = indexesIn(node);
+      if (idxs.size === 1 && idxs.has(index)) best = node;
+      else if (idxs.size > 1) break;
+      node = node.parentElement;
+    }
+    return (
+      best ||
+      probe.closest("li") ||
+      probe.closest('[role="group"]') ||
+      probe.closest("fieldset") ||
+      probe.parentElement
+    );
+  }
+
+  function workdayIndexedShown(prefix, index, field) {
+    const el = document.getElementById(`${prefix}-${index}--${field}`);
+    if (!el) return "";
+    return (el.value || el.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  function workdayPlaceholderLabel(text) {
+    return !text || /select one|select an option|^search$|choose one/i.test(text);
+  }
+
+  function isWorkdayWorkPanelEmpty(index) {
+    return (
+      !workdayIndexedShown("workExperience", index, "jobTitle") &&
+      !workdayIndexedShown("workExperience", index, "companyName")
+    );
+  }
+
+  function isWorkdayEduPanelEmpty(index) {
+    const school = workdayIndexedShown("education", index, "school");
+    const degree = workdayIndexedShown("education", index, "degree");
+    return !school && workdayPlaceholderLabel(degree);
+  }
+
+  function pageHasWorkExperience(exp) {
+    const wantTitle = (exp.title || "").trim().toLowerCase();
+    const wantCo = (exp.company || "").trim().toLowerCase();
+    if (!wantTitle && !wantCo) return false;
+    const meta = countWorkdayIndexed("workExperience", "jobTitle");
+    for (const idx of meta.indexes) {
+      const title = workdayIndexedShown("workExperience", idx, "jobTitle").toLowerCase();
+      const company = workdayIndexedShown(
+        "workExperience",
+        idx,
+        "companyName"
+      ).toLowerCase();
+      if (wantTitle && wantCo) {
+        if (title === wantTitle && company === wantCo) return true;
+        if (title === wantTitle && company.includes(wantCo.slice(0, 16))) return true;
+      } else if (wantTitle && title === wantTitle) {
+        return true;
+      } else if (wantCo && company === wantCo && !wantTitle) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function pageHasEducation(edu) {
+    const wantSchool = (educationFieldValue(edu, "school") || "").trim().toLowerCase();
+    if (!wantSchool) return false;
+    let meta = countWorkdayIndexed("education", "school");
+    if (!meta.count) meta = countWorkdayIndexed("education", "degree");
+    for (const idx of meta.indexes) {
+      const school = workdayIndexedShown("education", idx, "school").toLowerCase();
+      if (!school) continue;
+      if (
+        school === wantSchool ||
+        school.includes(wantSchool.slice(0, 18)) ||
+        wantSchool.includes(school.slice(0, 18))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function expandWorkdaySection(sectionId) {
+    const heading = document.getElementById(sectionId);
+    if (!heading) return;
+    if (findWorkdaySectionAddButton(sectionId)) return;
+    const meta = countWorkdayIndexed(
+      sectionId.startsWith("Education") ? "education" : "workExperience",
+      sectionId.startsWith("Education") ? "school" : "jobTitle"
+    );
+    if (meta.count > 0) return;
+    const clickable =
+      heading.closest("button") ||
+      heading.querySelector("button") ||
+      heading.parentElement?.querySelector("button") ||
+      heading;
+    if (clickable && typeof clickable.click === "function") {
+      clickable.click();
+      await sleep(350);
+    }
+  }
+
+  async function addOneWorkdayIndexedPanel(sectionId, prefix, fields) {
+    const fieldList = Array.isArray(fields) ? fields : [fields];
+    function snap() {
+      for (const f of fieldList) {
+        const meta = countWorkdayIndexed(prefix, f);
+        if (meta.count) return meta;
+      }
+      return countWorkdayIndexed(prefix, fieldList[0]);
+    }
+    const before = snap();
+    await expandWorkdaySection(sectionId);
+    const btn = findWorkdaySectionAddButton(sectionId);
+    if (!btn) return before;
+    btn.click();
+    for (let i = 0; i < 28; i++) {
+      await sleep(150);
+      const meta = snap();
+      if (meta.count > before.count) return meta;
+    }
+    return snap();
+  }
+
+  // Reuse an empty row when present; only click Add when every existing row is used.
+  async function claimEmptyWorkdayPanel(sectionId, prefix, fields, isEmpty) {
+    const fieldList = Array.isArray(fields) ? fields : [fields];
+    function snap() {
+      for (const f of fieldList) {
+        const meta = countWorkdayIndexed(prefix, f);
+        if (meta.count) return meta;
+      }
+      return countWorkdayIndexed(prefix, fieldList[0]);
+    }
+
+    await expandWorkdaySection(sectionId);
+    let meta = snap();
+    const emptyIdx = meta.indexes.find((idx) => isEmpty(idx));
+    if (emptyIdx != null) return emptyIdx;
+
+    meta = await addOneWorkdayIndexedPanel(sectionId, prefix, fieldList);
+    const afterEmpty = meta.indexes.find((idx) => isEmpty(idx));
+    if (afterEmpty != null) return afterEmpty;
+    if (meta.indexes.length) return meta.indexes[meta.indexes.length - 1];
+    return null;
+  }
+
+  async function fillWorkdayMonthYearInRoot(root, yyyyMm) {
+    const parts = parseMonthYear(yyyyMm);
+    if (!parts || !root) return 0;
+    const split = findDobSplitInRoot(root);
+    if (split && (split.month || split.year)) {
+      return fillDobSplitParts(split, { ...parts, dd: parts.dd || "01" });
+    }
+    const inputs = Array.from(
+      root.querySelectorAll("input:not([type=hidden]):not([type=checkbox]), textarea")
+    ).filter((el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length);
+    for (const input of inputs) {
+      if (input.value && String(input.value).trim()) continue;
+      const ph = `${input.placeholder || ""} ${input.getAttribute("aria-label") || ""} ${getFieldContext(input)}`.toLowerCase();
+      // Autodesk education uses year-only YYYY boxes.
+      if (/^yyyy$/.test((input.placeholder || "").trim()) || (ph.includes("yyyy") && !/mm/.test(ph))) {
+        if (fillWorkdayPlainInput(input, parts.yyyy)) return 1;
+        continue;
+      }
+      if (
+        /mm\s*\/\s*yyyy|m\s*\/\s*yyyy|month.*year|start date|end date|from|to\b/.test(ph) ||
+        inputs.length === 1
+      ) {
+        const formatted = `${parts.mm}/${parts.yyyy}`;
+        if (fillWorkdayPlainInput(input, formatted)) return 1;
+      }
+    }
+    return 0;
+  }
+
+  // Focus + native set — Workday rows below the fold / briefly readOnly break fillField.
+  function fillWorkdayPlainInput(el, value) {
+    if (!el || !value) return false;
+    if (el.value && String(el.value).trim()) return false;
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } catch (_) {}
+    try {
+      el.focus();
+    } catch (_) {}
+    const wasReadOnly = !!el.readOnly;
+    if (wasReadOnly) {
+      try {
+        el.readOnly = false;
+      } catch (_) {}
+    }
+    setNativeValue(el, value);
+    if (wasReadOnly) {
+      try {
+        el.readOnly = true;
+      } catch (_) {}
+    }
+    return !!(el.value && String(el.value).trim());
+  }
+
+  function workdayPanelTitleNumber(el, kind) {
+    if (!el) return null;
+    const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+    // Title nodes often include a sibling "Delete" in textContent.
+    const head = raw.split(/\bDelete\b/i)[0].trim();
+    const m = head.match(new RegExp(`^${kind}\\s+(\\d+)$`, "i"));
+    return m ? Number(m[1]) : null;
+  }
+
+  // Panels labeled "Work Experience 1", "Education 2", … — more reliable than id indexes alone.
+  function workdayRepeatingPanelRoots(kind) {
+    const titles = [];
+    const seen = new Set();
+
+    function consider(el) {
+      if (!el || seen.has(el)) return;
+      const n = workdayPanelTitleNumber(el, kind);
+      if (n == null) return;
+      // Prefer the smallest text node / leaf-ish title (avoid giant wrappers).
+      const textLen = ((el.textContent || "").replace(/\s+/g, " ").trim() || "").length;
+      if (textLen > 64) return;
+      seen.add(el);
+      if (titles.some((t) => t.n === n)) return;
+      titles.push({ n, titleEl: el });
+    }
+
+    Array.from(
+      document.querySelectorAll(
+        'h2, h3, h4, h5, legend, [role="heading"], [data-automation-id*="panel" i], button, div, span, label'
+      )
+    ).forEach(consider);
+
+    titles.sort((a, b) => a.n - b.n);
+
+    return titles.map(({ n, titleEl }) => {
+      let best = null;
+      let node = titleEl.parentElement;
+      while (node && node !== document.body) {
+        const hasDelete = Array.from(node.querySelectorAll("button, a")).some((b) =>
+          /^delete$/i.test((b.textContent || "").replace(/\s+/g, " ").trim())
+        );
+        const hasInputs = !!node.querySelector(
+          "input:not([type=hidden]), textarea, button[aria-haspopup], [data-uxi-widget-type]"
+        );
+        const other = Array.from(
+          node.querySelectorAll("h2, h3, h4, h5, legend, [role='heading'], div, span")
+        ).some((el) => {
+          if (el === titleEl) return false;
+          const on = workdayPanelTitleNumber(el, kind);
+          return on != null && on !== n;
+        });
+        if (other) break;
+        if (hasDelete && hasInputs) best = node;
+        node = node.parentElement;
+      }
+      return { n, titleEl, root: best || titleEl.parentElement || titleEl };
+    });
+  }
+
+  function workdayQueryInRoot(root, selectors) {
+    if (!root) return null;
+    for (const sel of selectors) {
+      const el = root.querySelector(sel);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 || r.height > 0 || el.offsetParent !== null) return el;
+      if (el.getClientRects().length) return el;
+    }
+    return null;
+  }
+
+  async function ensureWorkdayUiPanels(sectionId, kind, needed, prefix, fields) {
+    let panels = workdayRepeatingPanelRoots(kind);
+    if (needed <= 0) return panels;
+    let guard = 0;
+    while (panels.length < needed && guard++ < 10) {
+      const before = panels.length;
+      await addOneWorkdayIndexedPanel(sectionId, prefix, fields);
+      panels = workdayRepeatingPanelRoots(kind);
+      if (panels.length > before) continue;
+      const btn = findWorkdaySectionAddButton(sectionId);
+      if (!btn) break;
+      btn.click();
+      for (let i = 0; i < 24; i++) {
+        await sleep(150);
+        panels = workdayRepeatingPanelRoots(kind);
+        if (panels.length > before) break;
+      }
+      if (panels.length <= before) break;
+    }
+    return workdayRepeatingPanelRoots(kind);
+  }
+
+  async function fillWorkdaySchoolPrompt(trigger, schoolName) {
+    if (!trigger || !schoolName) return false;
+
+    const widget = (trigger.getAttribute("data-uxi-widget-type") || "").toLowerCase();
+    const isPrompt =
+      trigger.tagName === "BUTTON" ||
+      widget === "selectinput" ||
+      trigger.getAttribute("aria-haspopup") === "listbox" ||
+      trigger.getAttribute("aria-autocomplete") === "list";
+
+    // Autodesk often uses a plain text school box — PromptSelect logic leaves it blank.
+    if (!isPrompt && trigger.tagName === "INPUT") {
+      return fillWorkdayPlainInput(trigger, schoolName);
+    }
+
+    const remembered = await lookupSchoolMapping(schoolName);
+    if (remembered) {
+      const ok = await pickWorkdayDropdown(trigger, {
+        typeahead: remembered.slice(0, 48),
+        match: (t) =>
+          scoreSchoolOption(t, schoolName) >= 0.72 ||
+          scoreSchoolOption(t, remembered) >= 0.85,
+      });
+      if (ok) return true;
+    }
+    const queries = schoolTypeaheadQueries(schoolName);
+    for (const q of queries) {
+      const ok = await pickWorkdayDropdown(trigger, {
+        typeahead: q,
+        match: (t) => scoreSchoolOption(t, schoolName) >= SCHOOL_MIN_SCORE,
+      });
+      if (ok) {
+        const label = (trigger.value || trigger.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (label) await saveSchoolMapping(schoolName, label);
+        return true;
+      }
+    }
+    const last = await pickWorkdayDropdown(trigger, {
+      typeahead: schoolName.slice(0, 48),
+      match: (t) => scoreSchoolOption(t, schoolName) >= SCHOOL_MIN_SCORE,
+    });
+    if (last) return true;
+
+    // School not in Workday's list — type the free-text value so the row isn't blank.
+    if (trigger.tagName === "INPUT") {
+      if (workdayPopupOpen()) await dismissWorkdayPopup();
+      return fillWorkdayPlainInput(trigger, schoolName);
+    }
+    return false;
+  }
+
+  // Autodesk: degree prompt is Country → Degree (same hierarchy pattern as source).
+  async function fillWorkdayDegreePrompt(trigger, degree, countryHint) {
+    if (!trigger || !degree) return false;
+    const shown = (trigger.value || trigger.textContent || "").replace(/\s+/g, " ").trim();
+    if (shown && matchDegreeOption(shown, degree) && !workdayPlaceholderLabel(shown)) {
+      if (workdayPopupOpen()) await dismissWorkdayPopup();
+      return true;
+    }
+
+    trigger.focus();
+    fireWorkdayClick(trigger);
+    await sleep(350);
+
+    const country =
+      String(countryHint || "").trim() ||
+      "";
+    const countryMatch = (t) => {
+      const s = String(t || "").trim().toLowerCase();
+      if (!country) return false;
+      const want = country.toLowerCase();
+      if (s === want) return true;
+      if (want === "india" && /^(india|in)$/i.test(s)) return true;
+      if (want === "united states" && /united states|usa|^us$/i.test(s)) return true;
+      return s.startsWith(want) || want.startsWith(s);
+    };
+    const degreeMatch = (t) => matchDegreeOption(t, degree);
+
+    let opts = listWorkdayPromptOptions();
+    const looksLikeCountries =
+      opts.length > 0 &&
+      opts.filter(({ t }) =>
+        /^(india|united states|united kingdom|canada|australia|germany|singapore|japan)/i.test(
+          String(t || "").trim()
+        )
+      ).length >= 2;
+
+    if (looksLikeCountries || (country && opts.some(({ t }) => countryMatch(t)))) {
+      const parent =
+        opts.find(({ t }) => countryMatch(t)) ||
+        (country
+          ? null
+          : opts.find(({ t }) => /^(india|united states)$/i.test(String(t || "").trim())));
+      if (parent) {
+        const charm = workdaySideCharm(parent.o);
+        if (charm) fireWorkdayClick(charm);
+        else fireWorkdayClick(parent.o);
+        await sleep(500);
+        opts = await waitForWorkdayOptions((list) => list.some(({ t }) => degreeMatch(t)), 2500);
+      }
+    }
+
+    let leaf =
+      listWorkdayPromptOptions().find(({ t }) => degreeMatch(t)) ||
+      null;
+    if (!leaf) {
+      const scrolled = await scrollWorkdayListForOption(degreeMatch, 4000);
+      if (scrolled) leaf = { o: scrolled, t: scrolled.textContent || "" };
+    }
+    if (!leaf) {
+      // No hierarchy — try typeahead search on degree name.
+      await dismissWorkdayPopup();
+      return pickWorkdayDropdown(trigger, {
+        typeahead: false,
+        match: degreeMatch,
+      });
+    }
+
+    const radio = leaf.o.querySelector(
+      '[data-automation-id="radioBtn"], input[type="radio"]'
+    );
+    if (radio) fireWorkdayClick(radio);
+    fireWorkdayClick(
+      leaf.o.querySelector('[data-automation-id="promptOption"]') || leaf.o
+    );
+    await sleep(280);
+    // Commit like country listbox.
+    leaf.o.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+      })
+    );
+    await sleep(200);
+    await dismissWorkdayPopup();
+    const after = (trigger.value || trigger.textContent || "").replace(/\s+/g, " ").trim();
+    return !workdayPlaceholderLabel(after) && matchDegreeOption(after, degree);
+  }
+
+  async function fillWorkdayWorkExperiences(profile) {
+    const list = listExperiences(profile);
+    if (!list.length) return 0;
+    if (!document.getElementById("Work-Experience-section")) return 0;
+
+    if (workdayPopupOpen()) await dismissWorkdayPopup();
+
+    let panels = await ensureWorkdayUiPanels(
+      "Work-Experience-section",
+      "Work Experience",
+      list.length,
+      "workExperience",
+      ["jobTitle", "companyName"]
+    );
+    if (!panels.length) {
+      let meta = countWorkdayIndexed("workExperience", "jobTitle");
+      if (!meta.count) meta = countWorkdayIndexed("workExperience", "companyName");
+      while (meta.count < list.length) {
+        const before = meta.count;
+        meta = await addOneWorkdayIndexedPanel(
+          "Work-Experience-section",
+          "workExperience",
+          ["jobTitle", "companyName"]
+        );
+        if (meta.count <= before) break;
+      }
+      panels = meta.indexes.map((idx, i) => ({
+        n: i + 1,
+        root: workdayPanelRoot("workExperience", idx),
+        idx,
+      }));
+    }
+    if (!panels.length) return 0;
+
+    let filled = 0;
+    const n = Math.min(list.length, panels.length);
+    for (let i = 0; i < n; i++) {
+      const exp = list[i];
+      const { root, n: ordinal, idx: idxFromMeta } = panels[i];
+      if (!root && idxFromMeta == null) continue;
+      const scope = root || document;
+      try {
+        if (root) root.scrollIntoView({ block: "center" });
+      } catch (_) {}
+      await sleep(180);
+
+      const idxGuess = idxFromMeta != null ? idxFromMeta : ordinal - 1;
+      const titleEl =
+        document.getElementById(`workExperience-${idxGuess}--jobTitle`) ||
+        document.getElementById(`workExperience-${ordinal}--jobTitle`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-jobTitle"] input',
+          'input[id*="jobTitle" i]',
+          'input[name="jobTitle"]',
+        ]);
+      const companyEl =
+        document.getElementById(`workExperience-${idxGuess}--companyName`) ||
+        document.getElementById(`workExperience-${ordinal}--companyName`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-companyName"] input',
+          'input[id*="companyName" i]',
+          'input[name="companyName"]',
+        ]);
+      const locationEl =
+        document.getElementById(`workExperience-${idxGuess}--location`) ||
+        document.getElementById(`workExperience-${ordinal}--location`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-location"] input',
+          'input[id*="location" i]',
+          'input[name="location"]',
+        ]);
+      const roleEl =
+        document.getElementById(`workExperience-${idxGuess}--roleDescription`) ||
+        document.getElementById(`workExperience-${ordinal}--roleDescription`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-roleDescription"] textarea',
+          "textarea",
+        ]);
+      const currentEl =
+        document.getElementById(`workExperience-${idxGuess}--currentlyWorkHere`) ||
+        document.getElementById(`workExperience-${ordinal}--currentlyWorkHere`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-currentlyWorkHere"] input[type="checkbox"]',
+          'input[type="checkbox"]',
+        ]);
+
+      if (titleEl && exp.title && fillWorkdayPlainInput(titleEl, exp.title)) filled++;
+      if (companyEl && exp.company && fillWorkdayPlainInput(companyEl, exp.company)) filled++;
+      if (locationEl && exp.location && fillWorkdayPlainInput(locationEl, exp.location)) {
+        filled++;
+      }
+
+      if (currentEl && typeof exp.current === "boolean") {
+        if (!!currentEl.checked !== !!exp.current) {
+          currentEl.click();
+          filled++;
+          await sleep(120);
+        }
+      }
+
+      const startRoot = workdayQueryInRoot(scope, [
+        '[data-automation-id="formField-startDate"]',
+      ]);
+      const endRoot = workdayQueryInRoot(scope, [
+        '[data-automation-id="formField-endDate"]',
+      ]);
+      if (startRoot && exp.startDate) {
+        filled += await fillWorkdayMonthYearInRoot(startRoot, exp.startDate);
+      }
+      if (endRoot && !exp.current && exp.endDate) {
+        filled += await fillWorkdayMonthYearInRoot(endRoot, exp.endDate);
+      }
+
+      const role = experienceRoleText(exp);
+      if (roleEl && role && fillWorkdayPlainInput(roleEl, role)) filled++;
+      await sleep(120);
+    }
+    return filled;
+  }
+
+  async function fillWorkdayEducations(profile) {
+    const list = listEducations(profile);
+    if (!list.length) return 0;
+    if (!document.getElementById("Education-section")) return 0;
+
+    if (workdayPopupOpen()) await dismissWorkdayPopup();
+
+    let panels = await ensureWorkdayUiPanels(
+      "Education-section",
+      "Education",
+      list.length,
+      "education",
+      ["school", "degree", "fieldOfStudy"]
+    );
+    if (!panels.length) {
+      let meta = countWorkdayIndexed("education", "school");
+      if (!meta.count) meta = countWorkdayIndexed("education", "degree");
+      while (meta.count < list.length) {
+        const before = meta.count;
+        meta = await addOneWorkdayIndexedPanel(
+          "Education-section",
+          "education",
+          ["school", "degree", "fieldOfStudy"]
+        );
+        if (meta.count <= before) break;
+      }
+      panels = meta.indexes.map((idx, i) => ({
+        n: i + 1,
+        root: workdayPanelRoot("education", idx),
+        idx,
+      }));
+    }
+    if (!panels.length) return 0;
+
+    const countryHint =
+      profile.country ||
+      profile.addressCountry ||
+      (profile.location && /india/i.test(profile.location) ? "India" : "") ||
+      "India";
+
+    let filled = 0;
+    const n = Math.min(list.length, panels.length);
+    for (let i = 0; i < n; i++) {
+      const edu = list[i];
+      const { root, n: ordinal, idx: idxFromMeta } = panels[i];
+      if (!root && idxFromMeta == null) continue;
+      const scope = root || document;
+      try {
+        if (root) root.scrollIntoView({ block: "center" });
+      } catch (_) {}
+      await sleep(200);
+
+      const idxGuess = idxFromMeta != null ? idxFromMeta : ordinal - 1;
+      const schoolEl =
+        document.getElementById(`education-${idxGuess}--school`) ||
+        document.getElementById(`education-${ordinal}--school`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-school"] input',
+          '[data-automation-id="formField-school"] button',
+          'input[id*="school" i]',
+        ]);
+      const degreeEl =
+        document.getElementById(`education-${idxGuess}--degree`) ||
+        document.getElementById(`education-${ordinal}--degree`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-degree"] button',
+          '[data-automation-id="formField-degree"] input',
+          'button[id*="degree" i]',
+        ]);
+      const fosEl =
+        document.getElementById(`education-${idxGuess}--fieldOfStudy`) ||
+        document.getElementById(`education-${ordinal}--fieldOfStudy`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-fieldOfStudy"] input',
+          '[data-automation-id="formField-fieldOfStudy"] button',
+          'input[id*="fieldOfStudy" i]',
+        ]);
+      const gpaEl =
+        document.getElementById(`education-${idxGuess}--gradeAverage`) ||
+        document.getElementById(`education-${idxGuess}--gpa`) ||
+        document.getElementById(`education-${ordinal}--gradeAverage`) ||
+        workdayQueryInRoot(scope, [
+          '[data-automation-id="formField-gradeAverage"] input',
+          '[data-automation-id="formField-gpa"] input',
+          '[data-automation-id*="overall" i] input',
+          '[data-automation-id*="grade" i] input',
+        ]);
+
+      const school = educationFieldValue(edu, "school");
+      if (schoolEl && school) {
+        if (await fillWorkdaySchoolPrompt(schoolEl, school)) filled++;
+        else if (workdayPopupOpen()) await dismissWorkdayPopup();
+      }
+
+      const degree = educationFieldValue(edu, "degree");
+      if (degreeEl && degree) {
+        if (await fillWorkdayDegreePrompt(degreeEl, degree, countryHint)) filled++;
+        else if (workdayPopupOpen()) await dismissWorkdayPopup();
+      }
+
+      const discipline = educationFieldValue(edu, "discipline");
+      if (fosEl && discipline) {
+        const widget = (fosEl.getAttribute("data-uxi-widget-type") || "").toLowerCase();
+        const isPrompt =
+          fosEl.tagName === "BUTTON" ||
+          widget === "selectinput" ||
+          fosEl.getAttribute("aria-haspopup") === "listbox";
+        let ok = false;
+        if (isPrompt) {
+          ok = await pickWorkdayDropdown(fosEl, {
+            typeahead: discipline,
+            match: (t) => fuzzyOptionMatch(t, discipline),
+          });
+        }
+        if (!ok) ok = fillWorkdayPlainInput(fosEl, discipline);
+        if (ok) filled++;
+        else if (workdayPopupOpen()) await dismissWorkdayPopup();
+      }
+
+      const gpa = educationFieldValue(edu, "gpa");
+      if (gpaEl && gpa && fillWorkdayPlainInput(gpaEl, gpa)) filled++;
+
+      const startRoot = workdayQueryInRoot(scope, [
+        '[data-automation-id="formField-startDate"]',
+        '[data-automation-id="formField-fromDate"]',
+        '[data-automation-id="formField-firstYearAttended"]',
+        '[data-automation-id*="from" i]',
+      ]);
+      const endRoot = workdayQueryInRoot(scope, [
+        '[data-automation-id="formField-endDate"]',
+        '[data-automation-id="formField-toDate"]',
+        '[data-automation-id="formField-yearOfGraduation"]',
+        '[data-automation-id="formField-lastYearAttended"]',
+        '[data-automation-id*="toDate" i]',
+      ]);
+      if (edu.startDate) {
+        filled += await fillWorkdayMonthYearInRoot(startRoot || scope, edu.startDate);
+      }
+      if (edu.endDate && !edu.current) {
+        filled += await fillWorkdayMonthYearInRoot(endRoot || scope, edu.endDate);
+      }
+      await sleep(150);
+    }
+    return filled;
+  }
+
   async function fillWorkdayExperienceExtras(profile, resume) {
     let filled = 0;
     const onExp =
       !!wdEl("applyFlowMyExpPage") ||
       !!document.getElementById("Work-Experience-section") ||
+      !!document.getElementById("Education-section") ||
       !!document.getElementById("Resume/CV-section");
     if (!onExp) return 0;
 
@@ -2620,6 +4965,8 @@
     if (workdayExpExtrasDoneFor === stepKey) return 0;
     workdayExpExtrasDoneFor = stepKey;
 
+    filled += await fillWorkdayWorkExperiences(profile);
+    filled += await fillWorkdayEducations(profile);
     filled += await fillWorkdaySkills(profile);
     filled += await fillWorkdayWebsites(profile);
     if (resume && attachResume(resume)) filled++;
@@ -3005,7 +5352,7 @@
     (document.head || document.documentElement).appendChild(style);
   })();
 
-  function toast(message) {
+  function toast(message, ms = 3200) {
     const existing = document.getElementById("tvarin-toast");
     if (existing) existing.remove();
     const el = document.createElement("div");
@@ -3016,7 +5363,7 @@
     setTimeout(() => {
       el.classList.remove("tvarin-toast--show");
       setTimeout(() => el.remove(), 300);
-    }, 3200);
+    }, ms);
   }
 
   function bestEffortJobTitle() {
@@ -3276,6 +5623,7 @@
     const filled = result.filled || 0;
     const stopReason = result.stopReason || null;
     const steps = result.steps || 0;
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
 
     // Attach only if the adapter didn't already (Workday does this on Experience).
     // attachResume no-ops when the file is listed or this Fill already tried.
@@ -3319,13 +5667,17 @@
     } else if (stopReason === "blocked") {
       parts.push("paused on a step that needs your input");
     }
+    for (const w of warnings) {
+      if (w && !parts.includes(w)) parts.push(w);
+    }
 
     toast(
       parts.length
         ? `Tvarin: ${parts.join(" · ")} via ${adapter.label}.`
-        : `Tvarin: no matching fields found (${adapter.label}).`
+        : `Tvarin: no matching fields found (${adapter.label}).`,
+      warnings.length ? 5200 : 3200
     );
-    return { filled, resumeAttached, adapter: adapter.name, stopReason, steps };
+    return { filled, resumeAttached, adapter: adapter.name, stopReason, steps, warnings };
   }
 
   /* ------------------------------------------------------------------ *
