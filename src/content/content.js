@@ -1958,6 +1958,28 @@
     },
   };
 
+  // Google Forms — Phase 1: short-answer and paragraph questions are native
+  // <input>/<textarea> whose aria-labelledby points at the question text, so the
+  // generic pass already maps and fills them. We add job-aware logging metadata.
+  // (Choice/checkbox/dropdown widgets are role-divs — handled in a later phase.)
+  const googleFormsAdapter = {
+    name: "googleForms",
+    label: "Google Forms",
+    async fill(profile, settings) {
+      const meta = scrapeGoogleFormMeta();
+      const result = await runAdapter([], profile, settings);
+      const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
+      // Make an unmatched, unusually-worded question visible instead of silent.
+      const unmapped = countUnmappedGoogleFormQuestions();
+      if (unmapped > 0) {
+        warnings.push(
+          `couldn't place ${unmapped} question${unmapped === 1 ? "" : "s"} — review before you submit`
+        );
+      }
+      return { filled: result.filled || 0, warnings, meta, unmapped };
+    },
+  };
+
   // Greenhouse — stable ids; phone is always paired with a country selector,
   // so the phone box holds the national number only.
   // Education: multi-row (#school--0, #school--1, …) via "Add another".
@@ -5241,6 +5263,115 @@
    * 5. Router
    * ------------------------------------------------------------------ */
 
+  // Google Forms — recruiters collect applications through docs.google.com/forms.
+  // Unlike an ATS, the page has no stable ids and is also used for surveys/RSVPs,
+  // so we gate hard (see isJobGoogleForm) before claiming a form is a job app.
+
+  function isGoogleFormsHost() {
+    return (
+      location.hostname === "docs.google.com" &&
+      /\/forms\//.test(location.pathname)
+    );
+  }
+
+  // The form's own title (shown in the header banner). On the edit view the tab
+  // title carries a " - Google Forms" suffix we strip.
+  function googleFormTitle() {
+    const h = document.querySelector('[role="heading"]');
+    const fromHeading = h && h.textContent && h.textContent.trim();
+    if (fromHeading) return fromHeading;
+    return (document.title || "")
+      .replace(/\s*[-–]\s*Google Forms\s*$/i, "")
+      .trim();
+  }
+
+  // Question text for one list item: the item's heading, else the aria-label of
+  // its first control (both point at the same question copy).
+  function googleFormListitemLabel(li) {
+    const h = li.querySelector('[role="heading"]');
+    if (h && h.textContent && h.textContent.trim()) return h.textContent.trim();
+    const ctrl = li.querySelector(
+      'input, textarea, [role="radiogroup"], [role="listbox"], [role="list"]'
+    );
+    const al = ctrl && ctrl.getAttribute("aria-label");
+    return (al || "").trim();
+  }
+
+  function googleFormQuestionLabels() {
+    return Array.from(document.querySelectorAll('div[role="listitem"]'))
+      .map(googleFormListitemLabel)
+      .filter(Boolean);
+  }
+
+  // Best-effort {company, jobTitle} so the activity log shows something better
+  // than "docs.google.com". The form title is the most reliable single label.
+  function scrapeGoogleFormMeta() {
+    const title = googleFormTitle();
+    const headEl = document.querySelector('[role="heading"]');
+    const hay = `${title} ${headEl && headEl.parentElement ? headEl.parentElement.textContent : ""}`;
+    let company = "";
+    const at = hay.match(/\bat\s+([A-Z][A-Za-z0-9&.\- ]{1,40})/);
+    if (at) company = at[1].trim().replace(/\s+(is|are|we|for)\b[\s\S]*$/i, "");
+    return { jobTitle: title, company };
+  }
+
+  // Short-answer questions we could not map to a profile field and left empty.
+  // Excludes paragraph/essay and choice widgets — those aren't profile data, so
+  // counting them would just be noise. Surfacing this turns a silent miss (an
+  // unusually-worded question like "What should we call you?") into a visible one.
+  function countUnmappedGoogleFormQuestions() {
+    let n = 0;
+    document.querySelectorAll('div[role="listitem"]').forEach((li) => {
+      const input = li.querySelector(
+        'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type])'
+      );
+      if (!input || !isVisible(input)) return;
+      if (input.value && input.value.trim()) return; // already filled (by us or the user)
+      if (matchProfileKey(getFieldContext(input))) return; // mapped — value may just be absent
+      n++;
+    });
+    return n;
+  }
+
+  // Is this Google Form a job application (vs. a survey/RSVP/feedback form)?
+  // Host is a given, so we require a real content signal on top of it: either a
+  // job-shaped field cluster, or a job-shaped title alongside identity fields.
+  function computeIsJobGoogleForm() {
+    if (!isGoogleFormsHost()) return false;
+
+    const titleHay = `${googleFormTitle()} ${document.title}`.toLowerCase();
+    const titleLooksJob =
+      /appl(y|ication)|position|\brole\b|candidate|hiring|resume|\bcv\b|cover letter|\bjob\b/.test(
+        titleHay
+      );
+
+    const blob = googleFormQuestionLabels().join(" | ").toLowerCase();
+    const hasEmail = /e-?mail/.test(blob);
+    const hasName = /\bname\b|full name|first name|last name/.test(blob);
+    const hasJobArtifact =
+      /linkedin|resume|\bcv\b|portfolio|years?\s*of\s*experience|notice period|salary|work authorization|sponsorship|current company|current role|why do you want/.test(
+        blob
+      );
+
+    if (hasEmail && hasName && hasJobArtifact) return true;
+    if (titleLooksJob && hasEmail && hasName) return true;
+    return false;
+  }
+
+  // Cheap on non-Google pages (host check short-circuits). On a form the DOM
+  // scan is called repeatedly by the sidebar's mutation observer, so memoize
+  // per-URL for a few seconds.
+  let _gformGate = { url: "", val: false, at: 0 };
+  function isJobGoogleForm() {
+    if (!isGoogleFormsHost()) return false;
+    const now = Date.now();
+    const url = location.href.split("#")[0];
+    if (_gformGate.url === url && now - _gformGate.at < 3000) return _gformGate.val;
+    const val = computeIsJobGoogleForm();
+    _gformGate = { url, val, at: now };
+    return val;
+  }
+
   function pickAdapter() {
     const host = location.hostname.toLowerCase();
     // Greenhouse: hosted boards, embedded iframe, or the tell-tale field ids.
@@ -5275,12 +5406,17 @@
     // iCIMS: hosted domain (form often inside an icims.com iframe).
     if (host.includes("icims.com")) return icimsAdapter;
 
+    // Google Forms: only when the gate says it's a job application.
+    if (isJobGoogleForm()) return googleFormsAdapter;
+
     return genericAdapter;
   }
 
   // Used by the sidebar to auto-open on application pages.
   function isJobApplicationPage() {
     const host = location.hostname.toLowerCase();
+    // Google Forms used as a job application (gated — see isJobGoogleForm).
+    if (isJobGoogleForm()) return true;
     if (
       /greenhouse\.io$/.test(host) ||
       host.includes("greenhouse") ||
@@ -5575,11 +5711,51 @@
     toast("Tvarin: drafted an answer — review and edit before submitting.");
   }
 
+  // Draft is a job-application helper — it must not attach to every textarea on
+  // the web (code editors, chat boxes, comment fields, etc.). Two gates:
+  //   1. the page has to look like a job application (same test the sidebar uses
+  //      to decide whether to auto-open), and
+  //   2. the field must not be the backing textarea of a code editor — those
+  //      show up in online coding assessments that can live on careers/jobs
+  //      subdomains and would otherwise pass gate 1.
+  let _jobPageCache = { href: null, val: false };
+  function isJobApplicationPageCached() {
+    if (_jobPageCache.href !== location.href) {
+      _jobPageCache = { href: location.href, val: isJobApplicationPage() };
+    }
+    return _jobPageCache.val;
+  }
+
+  function isCodeEditorField(el) {
+    if (!el) return false;
+    // Backing textareas of the common web code editors live inside these hosts.
+    if (
+      el.closest(
+        ".monaco-editor, .CodeMirror, .cm-editor, .ace_editor, " +
+          "[data-mode-id], [class*='codemirror' i], [class*='monaco' i]"
+      )
+    ) {
+      return true;
+    }
+    // Monaco/ACE/CodeMirror name their input element distinctively.
+    const cls = (el.className && String(el.className)) || "";
+    if (/\b(inputarea|ace_text-input|cm-content)\b/i.test(cls)) return true;
+    // Editors hide their backing input from assistive tech.
+    if (el.getAttribute("aria-hidden") === "true") return true;
+    return false;
+  }
+
   document.addEventListener(
     "focusin",
     (e) => {
       const el = e.target;
-      if (el && el.tagName === "TEXTAREA" && isVisible(el)) {
+      if (
+        el &&
+        el.tagName === "TEXTAREA" &&
+        isVisible(el) &&
+        !isCodeEditorField(el) &&
+        isJobApplicationPageCached()
+      ) {
         activeTextarea = el;
         positionDraftButton(el);
       }
@@ -5636,11 +5812,14 @@
     // Only the TOP frame logs — otherwise embedded iframes (reCAPTCHA, Google
     // APIs, ATS embeds) each log themselves as bogus "applications".
     if (window === window.top) {
+      // Adapters may supply better metadata than the page-scrape heuristics
+      // (e.g. Google Forms, where hostname is always docs.google.com).
+      const meta = result.meta || {};
       await logApplication({
         url: location.href,
         hostname: location.hostname,
-        jobTitle: bestEffortJobTitle().slice(0, 200),
-        company: bestEffortCompany().slice(0, 200),
+        jobTitle: (meta.jobTitle || bestEffortJobTitle()).slice(0, 200),
+        company: (meta.company || bestEffortCompany()).slice(0, 200),
         ats: adapter.name,
         filled,
         steps,

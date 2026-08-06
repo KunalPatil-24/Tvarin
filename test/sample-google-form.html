@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Mimics how Google sets the tab title on a published /viewform page. -->
+    <title>Software Engineer Application at Acme Robotics</title>
+    <style>
+      :root {
+        --bg: #f0ebf8;
+        --card: #ffffff;
+        --fg: #202124;
+        --muted: #5f6368;
+        --border: #dadce0;
+        --accent: #673ab7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #202124;
+          --card: #2d2e30;
+          --fg: #e8eaed;
+          --muted: #9aa0a6;
+          --border: #5f6368;
+          --accent: #b39ddb;
+        }
+      }
+      body {
+        font: 14px/1.5 "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        margin: 0;
+        padding: 24px 12px 64px;
+      }
+      .form {
+        max-width: 640px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 24px;
+      }
+      .header {
+        border-top: 10px solid var(--accent);
+      }
+      .header h1 {
+        font-size: 24px;
+        font-weight: 400;
+        margin: 0 0 8px;
+      }
+      .header p {
+        color: var(--muted);
+        margin: 0;
+      }
+      .qtitle {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .req {
+        color: #d93025;
+        margin-left: 2px;
+      }
+      input[type="text"],
+      input[type="email"],
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: none;
+        border-bottom: 1px solid var(--border);
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        padding: 6px 0;
+        outline: none;
+      }
+      input:focus,
+      textarea:focus {
+        border-bottom: 2px solid var(--accent);
+      }
+      .opt {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        cursor: pointer;
+      }
+      .radio,
+      .checkbox {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--muted);
+        display: inline-block;
+      }
+      .radio {
+        border-radius: 50%;
+      }
+      [role="radio"][aria-checked="true"] .radio {
+        border-color: var(--accent);
+        box-shadow: inset 0 0 0 3px var(--accent);
+      }
+      [role="checkbox"][aria-checked="true"] .checkbox {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .dropdown {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 8px 12px;
+        cursor: pointer;
+        max-width: 320px;
+      }
+      .dropdown[aria-expanded="true"] + [role="listbox"] {
+        display: block;
+      }
+      [role="listbox"] {
+        display: none;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        margin-top: 4px;
+        max-width: 320px;
+        background: var(--card);
+      }
+      [role="option"] {
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      [role="option"]:hover {
+        background: var(--bg);
+      }
+      .submit {
+        align-self: flex-start;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 10px 24px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .note {
+        max-width: 640px;
+        margin: 0 auto 16px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="note">
+      Tvarin test fixture — mirrors Google Forms' ARIA structure
+      (<code>role="listitem"</code>, <code>aria-labelledby</code>,
+      <code>role="radio/checkbox/listbox"</code>). Not affiliated with Google.
+    </p>
+
+    <div class="form" role="list">
+      <!-- Form header: title heading is the FIRST role="heading" on the page. -->
+      <div class="card header">
+        <h1 role="heading" aria-level="1">Software Engineer Application at Acme Robotics</h1>
+        <p>Tell us about yourself. We review every application.</p>
+      </div>
+
+      <!-- Q1: short answer → fullName -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q1">
+          Full name <span class="req" aria-label="Required question">*</span>
+        </div>
+        <input type="text" aria-labelledby="q1" />
+      </div>
+
+      <!-- Q2: short answer → email -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q2">
+          Email address <span class="req" aria-label="Required question">*</span>
+        </div>
+        <input type="email" aria-labelledby="q2" />
+      </div>
+
+      <!-- Q3: short answer → phone -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q3">Phone number</div>
+        <input type="text" aria-labelledby="q3" />
+      </div>
+
+      <!-- Q4: short answer → linkedin -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q4">LinkedIn profile URL</div>
+        <input type="text" aria-labelledby="q4" />
+      </div>
+
+      <!-- Q5: short answer → portfolio -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q5">
+          Portfolio or personal website
+        </div>
+        <input type="text" aria-labelledby="q5" />
+      </div>
+
+      <!-- Q6: paragraph → why (unmapped in Phase 1; a Phase 3 semantic candidate) -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q6">
+          Why do you want to work at Acme Robotics?
+        </div>
+        <textarea rows="4" aria-labelledby="q6"></textarea>
+      </div>
+
+      <!-- Q7: dropdown (role=listbox) — Phase 2 -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q7">
+          Which role are you applying for?
+        </div>
+        <div class="dropdown" role="listbox" aria-labelledby="q7" aria-expanded="false" tabindex="0">
+          Choose
+        </div>
+        <div role="listbox" aria-labelledby="q7">
+          <div role="option" data-value="">Choose</div>
+          <div role="option" data-value="Backend Engineer">Backend Engineer</div>
+          <div role="option" data-value="Frontend Engineer">Frontend Engineer</div>
+          <div role="option" data-value="Full Stack Engineer">Full Stack Engineer</div>
+        </div>
+      </div>
+
+      <!-- Q8: multiple choice (role=radio divs) — Phase 2 -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q8">
+          Are you authorized to work in the US? <span class="req" aria-label="Required question">*</span>
+        </div>
+        <div role="radiogroup" aria-labelledby="q8">
+          <label class="opt" role="radio" aria-label="Yes" data-value="Yes" aria-checked="false">
+            <span class="radio"></span> Yes
+          </label>
+          <label class="opt" role="radio" aria-label="No" data-value="No" aria-checked="false">
+            <span class="radio"></span> No
+          </label>
+        </div>
+      </div>
+
+      <!-- Q9: checkboxes (role=checkbox divs) — Phase 2 -->
+      <div class="card" role="listitem">
+        <div class="qtitle" role="heading" aria-level="3" id="q9">
+          Which stacks are you comfortable with?
+        </div>
+        <div role="list" aria-labelledby="q9">
+          <label class="opt" role="checkbox" aria-label="JavaScript" aria-checked="false">
+            <span class="checkbox"></span> JavaScript
+          </label>
+          <label class="opt" role="checkbox" aria-label="Python" aria-checked="false">
+            <span class="checkbox"></span> Python
+          </label>
+          <label class="opt" role="checkbox" aria-label="Go" aria-checked="false">
+            <span class="checkbox"></span> Go
+          </label>
+        </div>
+      </div>
+
+      <!-- Submit — Tvarin must never click this. -->
+      <button type="button" class="submit">Submit</button>
+    </div>
+
+    <script>
+      // Minimal interactivity so the fixture behaves like a real form when
+      // clicked (radios/checkboxes toggle; dropdown expands and selects).
+      document.querySelectorAll('[role="radio"]').forEach((r) => {
+        r.addEventListener("click", () => {
+          r.parentElement
+            .querySelectorAll('[role="radio"]')
+            .forEach((s) => s.setAttribute("aria-checked", "false"));
+          r.setAttribute("aria-checked", "true");
+        });
+      });
+      document.querySelectorAll('[role="checkbox"]').forEach((c) => {
+        c.addEventListener("click", () => {
+          c.setAttribute(
+            "aria-checked",
+            c.getAttribute("aria-checked") === "true" ? "false" : "true"
+          );
+        });
+      });
+      document.querySelectorAll('.dropdown[role="listbox"]').forEach((d) => {
+        d.addEventListener("click", () =>
+          d.setAttribute(
+            "aria-expanded",
+            d.getAttribute("aria-expanded") === "true" ? "false" : "true"
+          )
+        );
+      });
+      document
+        .querySelectorAll('[role="listbox"]:not(.dropdown) [role="option"]')
+        .forEach((o) => {
+          o.addEventListener("click", () => {
+            const dd = o.closest('[role="listitem"]').querySelector(".dropdown");
+            dd.textContent = o.getAttribute("data-value") || "Choose";
+            dd.setAttribute("aria-expanded", "false");
+          });
+        });
+    </script>
+  </body>
+</html>
