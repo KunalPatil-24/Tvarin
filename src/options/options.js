@@ -18,6 +18,9 @@ const aiStatus = document.getElementById("ai-status");
 const FIELDS = [
   "firstName",
   "lastName",
+  "middleName",
+  "preferredName",
+  "pronouns",
   "email",
   "phoneCountryCode",
   "phone",
@@ -27,6 +30,7 @@ const FIELDS = [
   "state",
   "postalCode",
   "country",
+  "currentLocation",
   "linkedin",
   "github",
   "portfolio",
@@ -37,9 +41,12 @@ const FIELDS = [
   "hasNonCompete",
   "workAuthorized",
   "needsSponsorship",
+  "isOfLegalWorkingAge",
   "isGovernmentEmployee",
   "relatedToCompany",
   "hasCriminalRecord",
+  "noticePeriod",
+  "currentCTC",
   "gender",
   "ethnicity",
   "veteranStatus",
@@ -80,6 +87,119 @@ function load() {
   });
   loadResumeStatus();
   renderAuth();
+  renderLogins();
+}
+
+/* ----- Saved logins (device-key-encrypted vault, managed via background) ----- */
+
+const loginsList = document.getElementById("logins-list");
+const loginsEmpty = document.getElementById("logins-empty");
+
+function fmtWhen(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch (_) {
+    return "";
+  }
+}
+
+function renderLogins() {
+  if (!storageAvailable() || !loginsList) return;
+  chrome.runtime.sendMessage({ type: "TVARIN_CRED_LIST" }, (resp) => {
+    const creds = (resp && resp.credentials) || [];
+    loginsList.innerHTML = "";
+    if (!creds.length) {
+      if (loginsEmpty) loginsEmpty.hidden = false;
+      return;
+    }
+    if (loginsEmpty) loginsEmpty.hidden = true;
+
+    creds.forEach((cred) => {
+      const li = document.createElement("li");
+      li.className = "login-item";
+
+      const info = document.createElement("div");
+      info.className = "login-item__info";
+      const host = document.createElement("span");
+      host.className = "login-item__host";
+      host.textContent = cred.origin;
+      const user = document.createElement("span");
+      user.className = "login-item__user";
+      user.textContent = cred.username || "(no username)";
+      const meta = document.createElement("span");
+      meta.className = "login-item__meta";
+      meta.textContent = cred.updatedAt ? `Updated ${fmtWhen(cred.updatedAt)}` : "";
+      info.append(host, user, meta);
+
+      const pw = document.createElement("code");
+      pw.className = "login-item__pw";
+      pw.textContent = "••••••••";
+
+      const actions = document.createElement("div");
+      actions.className = "login-item__actions";
+
+      const showBtn = document.createElement("button");
+      showBtn.type = "button";
+      showBtn.className = "btn btn--ghost btn--sm";
+      showBtn.textContent = "Show";
+      let shown = false;
+      showBtn.addEventListener("click", () => {
+        if (shown) {
+          pw.textContent = "••••••••";
+          showBtn.textContent = "Show";
+          shown = false;
+          return;
+        }
+        chrome.runtime.sendMessage({ type: "TVARIN_CRED_REVEAL", id: cred.id }, (r) => {
+          if (r && typeof r.password === "string") {
+            pw.textContent = r.password;
+            showBtn.textContent = "Hide";
+            shown = true;
+          } else {
+            pw.textContent = (r && r.error) || "Couldn't decrypt.";
+          }
+        });
+      });
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "btn btn--ghost btn--sm";
+      copyBtn.textContent = "Copy";
+      copyBtn.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "TVARIN_CRED_REVEAL", id: cred.id }, async (r) => {
+          if (r && typeof r.password === "string") {
+            try {
+              await navigator.clipboard.writeText(r.password);
+              copyBtn.textContent = "Copied";
+              setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
+            } catch (_) {
+              copyBtn.textContent = "Failed";
+            }
+          }
+        });
+      });
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn btn--ghost btn--sm btn--danger";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", () => {
+        if (!confirm(`Delete the saved login for ${cred.origin}?`)) return;
+        chrome.runtime.sendMessage({ type: "TVARIN_CRED_DELETE", id: cred.id }, () => {
+          renderLogins();
+        });
+      });
+
+      actions.append(showBtn, copyBtn, delBtn);
+      li.append(info, pw, actions);
+      loginsList.appendChild(li);
+    });
+  });
 }
 
 /* ----- Google sign-in (via background service worker) ----- */

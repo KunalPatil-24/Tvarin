@@ -19,6 +19,9 @@
   const PROFILE_FIELDS = [
     "firstName",
     "lastName",
+    "middleName",
+    "preferredName",
+    "pronouns",
     "email",
     "phoneCountryCode",
     "phone",
@@ -28,6 +31,7 @@
     "state",
     "postalCode",
     "country",
+    "currentLocation",
     "linkedin",
     "github",
     "portfolio",
@@ -40,9 +44,13 @@
     "hasNonCompete",
     "workAuthorized",
     "needsSponsorship",
+    "isOfLegalWorkingAge",
     "isGovernmentEmployee",
     "relatedToCompany",
     "hasCriminalRecord",
+    // Semi-constant — real values drift, so the UI flags them for a re-check.
+    "noticePeriod",
+    "currentCTC",
     // Demographics / EEO (voluntary)
     "gender",
     "ethnicity",
@@ -302,6 +310,14 @@
         font-weight: 400;
         color: #6b7280;
         line-height: 1.45;
+      }
+      .note--warn {
+        padding: 9px 12px;
+        border-radius: 8px;
+        background: #fef3c7;
+        border: 1px solid #fcd34d;
+        color: #92400e;
+        font-weight: 500;
       }
       .section-title {
         margin: 18px 0 10px;
@@ -842,6 +858,9 @@
                     <div class="grid">
                       ${field("firstName", "First name", { required: true })}
                       ${field("lastName", "Last name", { required: true })}
+                      ${field("middleName", "Middle name")}
+                      ${field("preferredName", "Preferred name", { placeholder: "What you like to be called" })}
+                      ${field("pronouns", "Pronouns", { placeholder: "she/her", full: true })}
                       ${field("email", "Email address", { type: "email", required: true, full: true })}
                       ${field("phoneCountryCode", "Country code", { placeholder: "+91" })}
                       ${field("phone", "Phone", { type: "tel", placeholder: "9405824003" })}
@@ -875,6 +894,7 @@
                   </div>
                   <div class="panel" data-panel="address" hidden>
                     <div class="grid">
+                      ${field("currentLocation", "Current location", { placeholder: "e.g. Bengaluru, India", full: true })}
                       ${field("addressLine1", "Street address", { full: true })}
                       ${field("city", "City")}
                       ${field("state", "State / Province")}
@@ -898,6 +918,7 @@
                     <div class="grid">
                       ${selectField("workAuthorized", "Authorized to work in the job’s country?", YES_NO, { full: true })}
                       ${selectField("needsSponsorship", "Will you need visa / immigration sponsorship now or in the future?", YES_NO, { full: true })}
+                      ${selectField("isOfLegalWorkingAge", "Are you at least 18 years old?", YES_NO, { full: true })}
                       ${selectField("willingToRelocate", "Willing to relocate for a role?", YES_NO_DECLINE, { full: true })}
                     </div>
                     <div class="section-title">Background &amp; conflicts</div>
@@ -906,6 +927,14 @@
                       ${selectField("isGovernmentEmployee", "Current or former government employee?", YES_NO, { full: true })}
                       ${selectField("relatedToCompany", "Related to an employee of the company (or a conflict of interest)?", YES_NO, { full: true })}
                       ${selectField("hasCriminalRecord", "Convictions or pending criminal charges?", YES_NO_DECLINE, { full: true })}
+                    </div>
+                    <div class="section-title">Compensation &amp; availability</div>
+                    <div class="note note--warn">
+                      These drift over time. Tvarin fills them, but double-check they’re current before you submit.
+                    </div>
+                    <div class="grid">
+                      ${field("noticePeriod", "Notice period", { placeholder: "e.g. 2 months / Immediate", full: true })}
+                      ${field("currentCTC", "Current CTC / salary", { placeholder: "e.g. ₹18,00,000 / $120,000", full: true })}
                     </div>
                   </div>
                   <div class="panel" data-panel="demographics" hidden>

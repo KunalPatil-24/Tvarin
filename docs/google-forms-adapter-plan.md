@@ -31,9 +31,28 @@ forms and accepts job forms (incl. an untitled form with a name+email+LinkedIn c
 fields map to `fullName/email/phone/linkedin/portfolio`; paragraph + choice widgets are left
 untouched (Phases 2–3).
 
-**Still to validate on a live form:** that the form title is the first `[role="heading"]` and
-question titles are `[role="heading"]` inside each `[role="listitem"]` — the fixture follows the
-documented structure, but Google's live markup should be spot-checked before Phase 2.
+**Live validation — DONE** (ClearTax "Software Engineer (Backend)" job form, real DOM via
+Claude-in-Chrome). All Phase 1 assumptions held: title is the first `[role="heading"]`
+(`aria-level=1`); 13 questions as `div[role="listitem"]`; text inputs resolve via
+`aria-labelledby` → heading; gate returned true and text-fill ran live (3 fields filled from
+profile). Radio structure for Phase 2 confirmed: `role="radiogroup"` + `aria-labelledby`,
+children `role="radio"` with `aria-label` (option text), `data-value`, `aria-checked`.
+
+Findings:
+- The gate passed via the **field cluster**, not the title — the form's title is a job *title*
+  ("… @ClearTax"), so `titleLooksJob` was false. Confirms the two-signal gate was necessary; a
+  title-only gate would have missed this real job form. (Possible follow-up: broaden the title
+  regex with role words like engineer/developer/manager.)
+- "Current Location" did not fill — `MATCH_RULES` has city/state/country but no `/location/`
+  alias (Tier-A gap, deferred).
+- **Click registration — RESOLVED:** a plain `.click()` on a `role="radio"` div registers with
+  Google's handler (`aria-checked` flips false→true, which only Google's own JS sets). Phase 2
+  can select choices with a simple `.click()` on the option matched by `aria-label`/`data-value`
+  — no synthesized pointer events. (Note: required single-choice questions can't be cleared
+  once set — no "Clear selection" — so never click speculatively; only click the intended value.)
+- Dropdown (`role="listbox"`) and checkbox (`role="list"`) widgets were absent on this form, so
+  their click-registration is assumed-analogous but unverified — spot-check when a form with
+  them turns up.
 
 ## Goal
 

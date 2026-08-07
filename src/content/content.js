@@ -256,6 +256,20 @@
   const MATCH_RULES = [
     ["firstName", [/first name/, /\bgiven name\b/, /\bforename\b/, /\bfname\b/, /\bfirst\b/]],
     ["lastName", [/last name/, /\bsurname\b/, /family name/, /\blname\b/, /\blast\b/]],
+    // Preferred/middle name before the generic "name" -> fullName at the end.
+    ["middleName", [/middle name/, /middle initial/]],
+    [
+      "preferredName",
+      [
+        /preferred name/,
+        /nick ?name/,
+        /what should we call you/,
+        /what (?:do|should) (?:we|i) call you/,
+        /name you (?:go|prefer to go) by/,
+        /\bgoes? by\b/,
+      ],
+    ],
+    ["pronouns", [/pronoun/]],
     ["email", [/e-?mail/]],
     ["phoneCountryCode", [/country code/, /calling code/, /dial(ing)? code/, /phone code/, /\bisd\b/, /tel-country-code/]],
     ["phone", [/phone/, /mobile/, /telephone/, /\btel\b/, /\bcell\b/, /contact number/]],
@@ -285,6 +299,33 @@
     ["gpa", [/\bgpa\b/, /grade point/, /cumulative average/]],
     ["company", [/\bcompany\b/, /\bemployer\b/, /organization name/]],
     ["jobTitle", [/job title/, /position title/, /role title/, /current (job )?title/, /\bposition\b/]],
+    ["noticePeriod", [/notice period/, /period of notice/, /notice time/, /how (?:long|much) is your notice/]],
+    // Current pay only — never "expected"/"desired" (that changes per application).
+    [
+      "currentCTC",
+      [
+        /current ctc/,
+        /present ctc/,
+        /current (?:annual )?(?:salary|compensation|package|remunerat\w*)/,
+        /current fixed/,
+        /current in-?hand/,
+        /present (?:salary|compensation)/,
+      ],
+    ],
+    // Candidate's current location as one line ("Bengaluru, India"). Specific
+    // phrasings only — never a bare "location" (that may be the job's location
+    // or a relocation preference).
+    [
+      "currentLocation",
+      [
+        /current location/,
+        /present location/,
+        /current residence/,
+        /where are you (?:currently )?(?:based|located)/,
+        /where do you (?:currently )?(?:live|reside)/,
+        /location you are based/,
+      ],
+    ],
     // City/state/postal before address — Workday ids are often "address--city",
     // and a bare /\baddress\b/ would otherwise steal those fields.
     ["city", [/\bcity\b/, /\btown\b/]],
@@ -3516,6 +3557,15 @@
       return prefYesNo(profile.willingToRelocate);
     }
     if (
+      ((/\b18\b/.test(q) && /\bage\b|\bold(?:er)?\b|\byears?\b|\byrs?\b/.test(q)) ||
+        /\b18\s*\+/.test(q) ||
+        /legal(?:ly)? (?:working )?age/.test(q) ||
+        /old enough to (?:legally )?work/.test(q)) &&
+      !/experience/.test(q)
+    ) {
+      return prefYesNo(profile.isOfLegalWorkingAge);
+    }
+    if (
       /government (employee|official)|united states government|u\.?s\.? government|federal (government )?employee/.test(
         q
       ) &&
@@ -6115,6 +6165,262 @@
       title: bestEffortJobTitle().slice(0, 300),
       description: combined.slice(0, 8000),
     };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 7. Saved logins — autofill & offer-to-save on auth pages
+   * ------------------------------------------------------------------ *
+   * Companies force a new account per portal (Workday, iCIMS, …). This
+   * detects login / signup forms, autofills a saved login, offers to save a
+   * new one after submit, and can generate a strong password at signup.
+   * Passwords are decrypted in the background just-in-time; this script only
+   * ever holds the one it's about to type. Never auto-submits.
+   */
+
+  const SIGNUP_RE =
+    /sign\s?up|create (an )?account|register|get started|new account|join now/i;
+
+  function visiblePasswordInputs(root) {
+    return Array.from(
+      (root || document).querySelectorAll('input[type="password"]')
+    ).filter(isVisible);
+  }
+
+  // Find the username/email field paired with a password field: an explicit
+  // email/username input, else the last text-like input before it.
+  function findUsernameInput(scope, passwordEl) {
+    const byType = Array.from(
+      scope.querySelectorAll('input[type="email"]')
+    ).filter(isVisible);
+    if (byType.length) return byType[0];
+
+    const hintRe = /user|email|login|identifier|account|e-mail/i;
+    const hinted = Array.from(
+      scope.querySelectorAll('input[type="text"], input[type="tel"], input:not([type])')
+    ).filter((el) => {
+      if (!isVisible(el)) return false;
+      const hay = `${el.name} ${el.id} ${el.autocomplete} ${el.placeholder} ${
+        el.getAttribute("aria-label") || ""
+      }`;
+      return hintRe.test(hay);
+    });
+    if (hinted.length) return hinted[0];
+
+    // Fallback: last visible text input that sits before the password field.
+    const texts = Array.from(
+      scope.querySelectorAll('input[type="text"], input:not([type])')
+    ).filter(isVisible);
+    if (passwordEl) {
+      const before = texts.filter(
+        (t) => t.compareDocumentPosition(passwordEl) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      if (before.length) return before[before.length - 1];
+    }
+    return texts[0] || null;
+  }
+
+  // Describe the auth form on the page, if any.
+  function detectAuthForm() {
+    const pwds = visiblePasswordInputs(document);
+    if (!pwds.length) return null;
+    const first = pwds[0];
+    const scope = first.closest("form") || document.body;
+    const scopedPwds = pwds.filter((p) => (p.closest("form") || document.body) === scope);
+    const username = findUsernameInput(scope, first);
+
+    const text = `${scope.innerText || ""} ${document.title}`.slice(0, 4000);
+    const kind = scopedPwds.length >= 2 || SIGNUP_RE.test(text) ? "signup" : "login";
+    return { scope, passwords: scopedPwds.length ? scopedPwds : pwds, username, kind };
+  }
+
+  function sendBg(msg) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(msg, (resp) => {
+          void chrome.runtime.lastError; // swallow "context invalidated"
+          resolve(resp || null);
+        });
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  // A dismissible prompt with action buttons (richer than toast()).
+  function credPrompt(message, actions) {
+    const existing = document.getElementById("tvarin-cred-prompt");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.id = "tvarin-cred-prompt";
+    const msg = document.createElement("div");
+    msg.className = "tvarin-cred-prompt__msg";
+    msg.textContent = message;
+    box.appendChild(msg);
+    const row = document.createElement("div");
+    row.className = "tvarin-cred-prompt__actions";
+    const close = () => {
+      box.classList.remove("tvarin-cred-prompt--show");
+      setTimeout(() => box.remove(), 250);
+    };
+    (actions || []).forEach((a) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = a.label;
+      btn.className = a.primary
+        ? "tvarin-cred-prompt__btn tvarin-cred-prompt__btn--primary"
+        : "tvarin-cred-prompt__btn";
+      btn.addEventListener("click", () => {
+        close();
+        try {
+          a.onClick && a.onClick();
+        } catch (_) {}
+      });
+      row.appendChild(btn);
+    });
+    box.appendChild(row);
+    document.documentElement.appendChild(box);
+    requestAnimationFrame(() => box.classList.add("tvarin-cred-prompt--show"));
+    // Auto-dismiss non-critical prompts after a while.
+    setTimeout(close, 18000);
+    return close;
+  }
+
+  function fillPasswordField(el, value) {
+    // Password managers usually leave a filled field alone; we do too.
+    if (!value || !isVisible(el) || (el.value && el.value.trim())) return false;
+    setNativeValue(el, value);
+    return true;
+  }
+
+  async function autofillSavedLogin(auth) {
+    const resp = await sendBg({ type: "TVARIN_CRED_MATCH", host: location.hostname });
+    const creds = (resp && resp.credentials) || [];
+    if (!creds.length) return false;
+    const cred = creds[0]; // most-recently-used match
+    let filled = false;
+    if (auth.username && cred.username) {
+      filled = fillField(auth.username, cred.username) || filled;
+    }
+    auth.passwords.forEach((p) => {
+      filled = fillPasswordField(p, cred.password) || filled;
+    });
+    if (filled) {
+      sendBg({ type: "TVARIN_CRED_TOUCH", id: cred.id });
+      const who = cred.username ? ` (${cred.username})` : "";
+      toast(`Tvarin: filled your saved login${who}. Review, then sign in.`);
+    }
+    return filled;
+  }
+
+  async function offerGeneratePassword(auth) {
+    const resp = await sendBg({ type: "TVARIN_CRED_GENERATE" });
+    const pw = resp && resp.password;
+    if (!pw) return;
+    credPrompt("Creating an account? Tvarin can set a strong password.", [
+      {
+        label: "Generate password",
+        primary: true,
+        onClick: () => {
+          let did = false;
+          auth.passwords.forEach((p) => {
+            setNativeValue(p, pw);
+            did = true;
+          });
+          if (did) toast("Tvarin: strong password filled. It'll be offered to save on submit.");
+        },
+      },
+      { label: "No thanks" },
+    ]);
+  }
+
+  // Stash the just-submitted credentials so the save prompt survives a
+  // full-page navigation (background holds them in session memory).
+  function stashOnSubmit(auth) {
+    const capture = () => {
+      const pw = auth.passwords.find((p) => p.value && p.value.trim());
+      if (!pw) return;
+      sendBg({
+        type: "TVARIN_CRED_STASH",
+        origin: location.hostname,
+        username: (auth.username && auth.username.value) || "",
+        password: pw.value,
+        kind: auth.kind,
+      });
+    };
+    const form = auth.scope.tagName === "FORM" ? auth.scope : null;
+    if (form) form.addEventListener("submit", capture, true);
+    // SPA logins often submit via a button click, not a form submit event.
+    auth.scope.addEventListener(
+      "click",
+      (e) => {
+        if (isSubmitControl(e.target) || /log ?in|sign ?in|sign ?up|continue|create/i.test(
+          (e.target.closest("button,[role=button]") || {}).textContent || ""
+        )) {
+          setTimeout(capture, 0);
+        }
+      },
+      true
+    );
+  }
+
+  // If a submit stashed a login, ask whether to save it (this page or the next).
+  async function maybeOfferSave() {
+    const resp = await sendBg({ type: "TVARIN_CRED_PENDING", host: location.hostname });
+    const pending = resp && resp.pending;
+    if (!pending) return;
+    const who = pending.username ? ` for ${pending.username}` : "";
+    credPrompt(`Save this login${who} on ${credLabelHost(pending.origin)} to Tvarin?`, [
+      {
+        label: "Save password",
+        primary: true,
+        onClick: async () => {
+          const r = await sendBg({ type: "TVARIN_CRED_COMMIT_PENDING" });
+          toast(r && r.ok ? "Tvarin: login saved." : "Tvarin: couldn't save login.");
+        },
+      },
+      {
+        label: "Not now",
+        onClick: () => sendBg({ type: "TVARIN_CRED_PENDING_CLEAR" }),
+      },
+    ]);
+  }
+
+  function credLabelHost(host) {
+    return String(host || location.hostname).replace(/^www\./, "");
+  }
+
+  let credInited = false;
+  async function initCredentials() {
+    if (credInited) return;
+    // First, surface any pending save from a previous page's submit.
+    await maybeOfferSave();
+
+    const auth = detectAuthForm();
+    if (!auth) return;
+    credInited = true;
+
+    stashOnSubmit(auth);
+    const didFill = await autofillSavedLogin(auth);
+    if (!didFill && auth.kind === "signup") await offerGeneratePassword(auth);
+  }
+
+  // Auth forms often render after load (SPAs); retry briefly, then observe.
+  function scheduleCredInit() {
+    initCredentials();
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (credInited || tries++ > 6) {
+        clearInterval(iv);
+        return;
+      }
+      if (detectAuthForm()) initCredentials();
+    }, 700);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleCredInit, { once: true });
+  } else {
+    scheduleCredInit();
   }
 
   globalThis.TvarinAPI = {

@@ -9,6 +9,7 @@
  */
 
 importScripts(chrome.runtime.getURL("src/lib/supabase-config.js"));
+importScripts(chrome.runtime.getURL("src/lib/vault-crypto.js"));
 
 const KEYS = {
   profile: "tvarin.profile",
@@ -18,6 +19,10 @@ const KEYS = {
   // IDs we've successfully pushed at least once. Needed so "missing from
   // server" means "deleted on the dashboard" — not "never uploaded yet".
   syncedIds: "tvarin.syncedAppIds",
+  // Saved logins. Each entry: { id, origin, label, username, iv, ct,
+  // createdAt, updatedAt, lastUsedAt }. `iv`/`ct` are the device-key-encrypted
+  // password (see src/lib/vault-crypto.js) — never the plaintext.
+  credentials: "tvarin.credentials",
 };
 
 const DRAFT_ENDPOINT = `${SUPABASE_URL}/functions/v1/draft`;
@@ -545,6 +550,246 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[KEYS.applications]) scheduleSync();
 });
 
+/* ----- Saved logins (device-key-encrypted password vault) -----
+ *
+ * The service worker is the single extension-context owner of the vault:
+ * the device key lives in the extension's IndexedDB, and passwords are only
+ * ever decrypted here, in response to a message, and handed to the content
+ * script for the one field it's about to fill.
+ */
+
+function credId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `cred-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Normalise a hostname to a stable match key (drop leading www.).
+function credHost(hostname) {
+  return String(hostname || "").replace(/^www\./i, "").toLowerCase();
+}
+
+// Registrable-ish base domain (last two labels). Good enough to let a saved
+// login for careers.acme.com fill on jobs.acme.com; multi-part TLDs
+// (foo.co.uk) fall back to exact-host matching, which is still correct.
+function baseDomain(host) {
+  const parts = credHost(host).split(".");
+  return parts.length <= 2 ? credHost(host) : parts.slice(-2).join(".");
+}
+
+function credMatches(entry, host) {
+  const a = credHost(entry.origin);
+  const b = credHost(host);
+  return a === b || baseDomain(a) === baseDomain(b);
+}
+
+async function getCredentials() {
+  const data = await get(KEYS.credentials);
+  const list = data[KEYS.credentials];
+  return Array.isArray(list) ? list : [];
+}
+
+// Public list: metadata only, never the password. For the Options manager.
+async function listCredentials() {
+  const list = await getCredentials();
+  return list
+    .map(({ id, origin, label, username, createdAt, updatedAt, lastUsedAt }) => ({
+      id,
+      origin,
+      label,
+      username,
+      createdAt,
+      updatedAt,
+      lastUsedAt,
+    }))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+// Logins that match a page host, WITH decrypted passwords, for autofill.
+// Most-recently-used first so the caller can pick the best default.
+async function matchCredentials(host) {
+  if (!host) return [];
+  const list = await getCredentials();
+  const hits = list
+    .filter((e) => credMatches(e, host))
+    .sort((x, y) => (y.lastUsedAt || y.updatedAt || 0) - (x.lastUsedAt || x.updatedAt || 0));
+  const out = [];
+  for (const e of hits) {
+    let password;
+    try {
+      password = await TvarinVault.decrypt({ iv: e.iv, ct: e.ct });
+    } catch (_) {
+      continue; // key rotated / corrupt entry — skip rather than fail the batch
+    }
+    out.push({ id: e.id, origin: e.origin, label: e.label, username: e.username, password });
+  }
+  return out;
+}
+
+// Reveal one password (Options "show"/copy). Kept separate from listing so
+// the plaintext is only produced on explicit, per-item request.
+async function revealCredential(id) {
+  const list = await getCredentials();
+  const e = list.find((x) => x.id === id);
+  if (!e) return { error: "Not found." };
+  try {
+    return { password: await TvarinVault.decrypt({ iv: e.iv, ct: e.ct }) };
+  } catch (_) {
+    return { error: "Couldn't decrypt on this device." };
+  }
+}
+
+// Save or update a login. Matches an existing entry by (host, username) so
+// re-saving after a password change updates in place instead of duplicating.
+async function saveCredential({ origin, label, username, password }) {
+  origin = credHost(origin);
+  username = String(username || "").trim();
+  if (!origin || !password) return { error: "Nothing to save." };
+
+  const enc = await TvarinVault.encrypt(password);
+  const list = await getCredentials();
+  const now = Date.now();
+  const idx = list.findIndex(
+    (e) => credHost(e.origin) === origin && (e.username || "") === username
+  );
+
+  if (idx >= 0) {
+    list[idx] = {
+      ...list[idx],
+      label: label || list[idx].label || origin,
+      username,
+      iv: enc.iv,
+      ct: enc.ct,
+      updatedAt: now,
+    };
+    await set({ [KEYS.credentials]: list });
+    return { ok: true, id: list[idx].id, updated: true };
+  }
+
+  const entry = {
+    id: credId(),
+    origin,
+    label: label || origin,
+    username,
+    iv: enc.iv,
+    ct: enc.ct,
+    createdAt: now,
+    updatedAt: now,
+    lastUsedAt: 0,
+  };
+  list.push(entry);
+  await set({ [KEYS.credentials]: list });
+  return { ok: true, id: entry.id, updated: false };
+}
+
+async function deleteCredential(id) {
+  const list = await getCredentials();
+  const next = list.filter((e) => e.id !== id);
+  await set({ [KEYS.credentials]: next });
+  return { ok: true };
+}
+
+// Note that an entry was just used for autofill (drives most-recent ordering).
+async function touchCredential(id) {
+  const list = await getCredentials();
+  const e = list.find((x) => x.id === id);
+  if (!e) return { ok: false };
+  e.lastUsedAt = Date.now();
+  await set({ [KEYS.credentials]: list });
+  return { ok: true };
+}
+
+/* ----- Pending save (survives the login page's navigation) -----
+ *
+ * When the user submits a login/signup we stash the candidate in
+ * chrome.storage.session — in-memory, never written to disk, cleared when the
+ * browser closes — so the "save this login?" prompt can appear on the page we
+ * land on next. The plaintext password stays in the background: the content
+ * script is told only the host/username and asks us to commit the save.
+ */
+
+const PENDING_KEY = "tvarin.pendingSave";
+
+function sessionGet(key) {
+  return new Promise((resolve) => chrome.storage.session.get(key, resolve));
+}
+function sessionSet(obj) {
+  return new Promise((resolve) => chrome.storage.session.set(obj, resolve));
+}
+function sessionRemove(key) {
+  return new Promise((resolve) => chrome.storage.session.remove(key, resolve));
+}
+
+async function stashPendingSave({ origin, username, password, kind }) {
+  if (!password) return { ok: false };
+  await sessionSet({
+    [PENDING_KEY]: {
+      origin: credHost(origin),
+      username: String(username || "").trim(),
+      password,
+      kind: kind || "login",
+      ts: Date.now(),
+    },
+  });
+  return { ok: true };
+}
+
+// Report a pending save for this host WITHOUT returning the password, and only
+// if an identical login isn't already saved.
+async function getPendingSave(host) {
+  const res = await sessionGet(PENDING_KEY);
+  const p = res[PENDING_KEY];
+  if (!p) return { pending: null };
+  if (host && !credMatches({ origin: p.origin }, host)) return { pending: null };
+
+  const list = await getCredentials();
+  for (const e of list) {
+    if (credHost(e.origin) === credHost(p.origin) && (e.username || "") === p.username) {
+      try {
+        if ((await TvarinVault.decrypt({ iv: e.iv, ct: e.ct })) === p.password) {
+          await sessionRemove(PENDING_KEY); // already saved, nothing to offer
+          return { pending: null };
+        }
+      } catch (_) {}
+    }
+  }
+  return { pending: { origin: p.origin, username: p.username, kind: p.kind } };
+}
+
+async function commitPendingSave() {
+  const res = await sessionGet(PENDING_KEY);
+  const p = res[PENDING_KEY];
+  if (!p) return { error: "Nothing to save." };
+  const out = await saveCredential({
+    origin: p.origin,
+    label: p.origin,
+    username: p.username,
+    password: p.password,
+  });
+  await sessionRemove(PENDING_KEY);
+  return out;
+}
+
+// Strong random password for signups. Ambiguous-looking chars left out.
+function generatePassword(length = 20) {
+  const sets = {
+    lower: "abcdefghijkmnpqrstuvwxyz",
+    upper: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+    digit: "23456789",
+    sym: "!@#$%^&*-_=+?",
+  };
+  const all = sets.lower + sets.upper + sets.digit + sets.sym;
+  const pick = (chars) => chars[crypto.getRandomValues(new Uint32Array(1))[0] % chars.length];
+  const n = Math.max(12, Math.min(64, length));
+  // Guarantee one of each class, then fill the rest, then shuffle.
+  const out = [pick(sets.lower), pick(sets.upper), pick(sets.digit), pick(sets.sym)];
+  while (out.length < n) out.push(pick(all));
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out.join("");
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "TVARIN_OPEN_DASHBOARD") {
     scheduleSync(0); // flush latest before the dashboard loads
@@ -604,6 +849,58 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "TVARIN_MATCH") {
     matchJob(msg).then(sendResponse);
     return true; // async response
+  }
+
+  /* ----- Saved logins ----- */
+  if (msg && msg.type === "TVARIN_CRED_MATCH") {
+    matchCredentials(msg.host)
+      .then((credentials) => sendResponse({ ok: true, credentials }))
+      .catch((e) => sendResponse({ ok: false, error: e && e.message }));
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_SAVE") {
+    saveCredential(msg)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ error: (e && e.message) || "Save failed." }));
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_LIST") {
+    listCredentials()
+      .then((credentials) => sendResponse({ ok: true, credentials }))
+      .catch((e) => sendResponse({ ok: false, error: e && e.message }));
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_REVEAL") {
+    revealCredential(msg.id).then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_DELETE") {
+    deleteCredential(msg.id).then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_TOUCH") {
+    touchCredential(msg.id).then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_GENERATE") {
+    sendResponse({ ok: true, password: generatePassword(msg.length) });
+    return; // sync
+  }
+  if (msg && msg.type === "TVARIN_CRED_STASH") {
+    stashPendingSave(msg).then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_PENDING") {
+    getPendingSave(msg.host).then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_COMMIT_PENDING") {
+    commitPendingSave().then(sendResponse);
+    return true;
+  }
+  if (msg && msg.type === "TVARIN_CRED_PENDING_CLEAR") {
+    sessionRemove(PENDING_KEY).then(() => sendResponse({ ok: true }));
+    return true;
   }
 });
 

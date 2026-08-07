@@ -28,6 +28,9 @@
           <div class="grid">
             <label>First name <input name="firstName" type="text" autocomplete="given-name" /></label>
             <label>Last name <input name="lastName" type="text" autocomplete="family-name" /></label>
+            <label>Middle name <input name="middleName" type="text" autocomplete="additional-name" /></label>
+            <label>Preferred name <input name="preferredName" type="text" placeholder="What you like to be called" /></label>
+            <label>Pronouns <input name="pronouns" type="text" placeholder="she/her" /></label>
             <label>Email <input name="email" type="email" autocomplete="email" /></label>
             <label>Country code <input name="phoneCountryCode" type="text" placeholder="+91" autocomplete="tel-country-code" /></label>
             <label>Phone <input name="phone" type="tel" placeholder="9405824003" autocomplete="tel-national" /></label>
@@ -38,6 +41,7 @@
         <fieldset>
           <legend>Address</legend>
           <div class="grid">
+            <label class="grid__full">Current location <input name="currentLocation" type="text" placeholder="e.g. Bengaluru, India" /></label>
             <label class="grid__full">Street address <input name="addressLine1" type="text" autocomplete="address-line1" /></label>
             <label>City <input name="city" type="text" autocomplete="address-level2" /></label>
             <label>State / Province <input name="state" type="text" autocomplete="address-level1" /></label>
@@ -135,6 +139,13 @@
                 <option value="no">No</option>
               </select>
             </label>
+            <label class="grid__full">Are you at least 18 years old?
+              <select name="isOfLegalWorkingAge">
+                <option value="">Not set</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
             <label class="grid__full">Willing to relocate?
               <select name="willingToRelocate">
                 <option value="">Not set</option>
@@ -172,6 +183,17 @@
                 <option value="prefer_not_to_say">Prefer not to say</option>
               </select>
             </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Compensation &amp; availability</legend>
+          <p class="field-note field-note--warn">
+            These drift over time. Tvarin fills them, but double-check they’re current before you submit.
+          </p>
+          <div class="grid">
+            <label class="grid__full">Notice period <input name="noticePeriod" type="text" placeholder="e.g. 2 months / Immediate" /></label>
+            <label class="grid__full">Current CTC / salary <input name="currentCTC" type="text" placeholder="e.g. ₹18,00,000 / $120,000" /></label>
           </div>
         </fieldset>
 
@@ -251,6 +273,21 @@
           <span id="saved" class="saved" aria-live="polite"></span>
         </div>
       </form>
+
+      <section class="logins" id="logins-section" aria-labelledby="logins-heading">
+        <h2 id="logins-heading">Saved logins</h2>
+        <p class="field-note">
+          Company portals make you create a separate account each time. Tvarin
+          saves those logins and fills them for you next time. Passwords are
+          <strong>encrypted with a device key</strong> — never stored as plain
+          text and not readable off disk. They stay on this device and don’t sync.
+        </p>
+        <ul id="logins-list" class="logins-list"></ul>
+        <p id="logins-empty" class="resume-status">
+          No saved logins yet. Sign in on a job portal and Tvarin will offer to
+          save it.
+        </p>
+      </section>
     </main>
 
     <script src="options.js"></script>
