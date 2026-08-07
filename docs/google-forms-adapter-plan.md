@@ -1,7 +1,34 @@
 # Google Forms adapter — implementation plan
 
-Status: **Phase 1 shipped** (text fields + gate + logging + auto-open) · Phases 2–3 pending.
+Status: **Phase 1 shipped**, **Phase 2 implemented** (choice widgets) · Phase 3 pending.
 Target: `src/content/content.js` (new adapter + router + gate), minor `src/sidebar/sidebar.js` copy.
+
+## Phase 2 — implemented (choice widgets)
+
+Landed in `src/content/content.js`:
+
+- `resolveGoogleFormChoiceMatcher(label, profile, settings)` → a matcher `(optionText)=>bool`,
+  or `null` when there's no confident answer. Chains the existing resolvers: EEO
+  (`resolveWorkdayDemographicMatch`), yes/no intents (`resolveWorkdayQuestionAnswer` — work auth,
+  sponsorship, relocation, 18+, government, criminal, …), then a conservative direct profile-value
+  match (country, pronouns) via `matchProfileKey`/`valueForKey`.
+- `fillGoogleFormChoice()` — single-choice (`role="radiogroup"`) + checkbox (`role="list"`):
+  `.click()` the matched option (plain click registers — verified live).
+- `fillGoogleFormDropdowns()` — `role="listbox"`: open, pick the matching option (skips the
+  "Choose" placeholder), closes the menu again on no match.
+- Wired into `googleFormsAdapter.fill` after the text pass; counts add to `filled`.
+- **Safety rule enforced:** only ever clicks on a confident match; leaves the question blank
+  otherwise (required single-choice questions can't be cleared once set).
+
+Verified: `node --check`; `gfNorm` normalization 5/5; matcher chain 9/9 against the **real**
+resolvers extracted from source (yes/no, EEO, direct-value all correct; "Total Experience",
+"Applying for", office-preference all correctly skipped); live read-only dry-run on the ClearTax
+form detected all 3 radio groups with correct labels/options.
+
+**Not yet verified live:** checkbox (`role="list"`) and dropdown (`role="listbox"`) filling — the
+ClearTax form had neither. Structure/traversal mirrors the verified radio path, but spot-check when
+a form with them appears. Future matchers worth adding: total-experience range (compute years from
+`experiences[]` → match "2–5 years") and a `workLocationPreference` field (the office Yes/No).
 
 ## Phase 1 — shipped
 

@@ -2009,6 +2009,9 @@
     async fill(profile, settings) {
       const meta = scrapeGoogleFormMeta();
       const result = await runAdapter([], profile, settings);
+      // Phase 2 — role-div choice widgets the generic text pass can't reach.
+      const choiceFilled = fillGoogleFormChoice(profile, settings);
+      const dropdownFilled = await fillGoogleFormDropdowns(profile, settings);
       const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
       // Make an unmatched, unusually-worded question visible instead of silent.
       const unmapped = countUnmappedGoogleFormQuestions();
@@ -2017,7 +2020,12 @@
           `couldn't place ${unmapped} question${unmapped === 1 ? "" : "s"} — review before you submit`
         );
       }
-      return { filled: result.filled || 0, warnings, meta, unmapped };
+      return {
+        filled: (result.filled || 0) + choiceFilled + dropdownFilled,
+        warnings,
+        meta,
+        unmapped,
+      };
     },
   };
 
@@ -5381,6 +5389,137 @@
       n++;
     });
     return n;
+  }
+
+  // Phase 2 — choice widgets. Google Forms renders single-choice, checkbox, and
+  // dropdown questions as ARIA role-divs (not native inputs), so the generic
+  // text pass skips them. We fill them by reusing the same intent (yes/no), EEO,
+  // and profile-value resolvers the ATS adapters use. A wrong pick on a required
+  // single-choice question can't be cleared, so we only click on a confident
+  // match and otherwise leave the question blank.
+
+  function gfOptionText(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("data-value") ||
+      el.textContent ||
+      ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function gfNorm(s) {
+    return String(s || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  // Matcher (optionText -> bool) for a choice question, or null when we have no
+  // confident answer to give.
+  function resolveGoogleFormChoiceMatcher(label, profile, settings) {
+    const q = String(label || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (!q) return null;
+    // EEO / demographics (gender, ethnicity, veteran, disability, orientation).
+    const demo = resolveWorkdayDemographicMatch(q, profile, settings);
+    if (demo) return demo;
+    // Intent-based yes/no facts (work auth, sponsorship, relocation, 18+, ...).
+    const yn = resolveWorkdayQuestionAnswer(q, profile);
+    if (yn) return matchYesNoOption(yn);
+    // Direct profile value (e.g. country, pronouns). Conservative: normalized
+    // equality, or one side is a clear prefix of the other.
+    const key = matchProfileKey(q);
+    if (key && key !== "fullName") {
+      const val = gfNorm(valueForKey(profile, key));
+      if (val && val.length >= 2) {
+        return (t) => {
+          const nt = gfNorm(t);
+          if (!nt) return false;
+          if (nt === val) return true;
+          const [a, b] = nt.length <= val.length ? [nt, val] : [val, nt];
+          return a.length >= 3 && b.startsWith(a + " ");
+        };
+      }
+    }
+    return null;
+  }
+
+  // Each choice question: its radiogroup or checkbox list, tied to its listitem.
+  function googleFormChoiceGroups() {
+    const groups = [];
+    document.querySelectorAll('div[role="listitem"]').forEach((li) => {
+      const rg = li.querySelector('[role="radiogroup"]');
+      if (rg) {
+        groups.push({ li, container: rg, optSel: '[role="radio"]' });
+        return;
+      }
+      const list = li.querySelector('[role="list"]');
+      if (list && list.querySelector('[role="checkbox"]')) {
+        groups.push({ li, container: list, optSel: '[role="checkbox"]' });
+      }
+    });
+    return groups;
+  }
+
+  // Single-choice + checkbox questions: click the matching option (plain .click()
+  // registers with Google's handler — verified on a live form).
+  function fillGoogleFormChoice(profile, settings) {
+    let filled = 0;
+    for (const g of googleFormChoiceGroups()) {
+      const matcher = resolveGoogleFormChoiceMatcher(
+        googleFormListitemLabel(g.li),
+        profile,
+        settings
+      );
+      if (!matcher) continue;
+      const opts = Array.from(g.container.querySelectorAll(g.optSel)).filter(isVisible);
+      const hit = opts.find((o) => {
+        const t = gfOptionText(o);
+        return t && matcher(t);
+      });
+      if (!hit || hit.getAttribute("aria-checked") === "true") continue;
+      hit.click();
+      filled++;
+    }
+    return filled;
+  }
+
+  // Dropdown questions (role="listbox"): open, pick the matching option, skipping
+  // the "Choose" placeholder. Closes the menu again when nothing matches.
+  async function fillGoogleFormDropdowns(profile, settings) {
+    let filled = 0;
+    const items = Array.from(document.querySelectorAll('div[role="listitem"]'));
+    for (const li of items) {
+      const listbox = li.querySelector('[role="listbox"]');
+      if (!listbox || li.querySelector('[role="radiogroup"]')) continue;
+      const matcher = resolveGoogleFormChoiceMatcher(
+        googleFormListitemLabel(li),
+        profile,
+        settings
+      );
+      if (!matcher) continue;
+      const chosen = listbox.querySelector('[role="option"][aria-selected="true"]');
+      if (chosen && !/^\s*choose\s*$/i.test(chosen.textContent || "")) continue;
+      listbox.click();
+      await sleep(220);
+      let opts = Array.from(li.querySelectorAll('[role="option"]'));
+      if (!opts.length) opts = Array.from(document.querySelectorAll('[role="option"]'));
+      const hit = opts.find((o) => {
+        const t = gfOptionText(o);
+        return t && !/^\s*choose\s*$/i.test(t) && matcher(t);
+      });
+      if (hit) {
+        hit.click();
+        filled++;
+      } else {
+        listbox.click(); // no match — close the menu we opened
+        await sleep(60);
+      }
+    }
+    return filled;
   }
 
   // Is this Google Form a job application (vs. a survey/RSVP/feedback form)?
