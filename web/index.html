@@ -4,81 +4,204 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tvarin — Applications</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Titillium+Web:wght@400;600;700;900&display=swap"
+      rel="stylesheet"
+    />
     <style>
+      /* Matches the Tvarin extension design tokens: white canvas + flat blue accent (Inter). */
       :root {
-        --bg: #f6f7f9;
-        --card: #ffffff;
-        --fg: #111827;
+        --bg: #ffffff;
+        --surface: #ffffff;
+        --surface-2: #fafbfc;
+        --fg: #111111;
         --muted: #6b7280;
-        --border: #e6e8eb;
+        --muted-2: #9aa1ad;
+        --border: #ebebeb;
+        --border-strong: #e0e0e0;
         --accent: #2f6fed;
-        --ok: #067647;
+        --accent-hover: #2563eb;
+        --accent-soft: #eaf2ff;
+        --ok: #059669;
+        --ok-soft: #e7f6ef;
         --warn: #b45309;
-        --bad: #b42318;
+        --warn-soft: #fef3c7;
+        --bad: #dc2626;
+        --bad-soft: #fdeaea;
+        --slate: #64748b;
+        --slate-soft: #f1f5f9;
         --radius: 14px;
-        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --radius-sm: 10px;
+        --shadow: 0 1px 2px rgba(17, 24, 39, 0.04), 0 6px 18px rgba(17, 24, 39, 0.05);
+        --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        /* Jobright's signature display font (headings, wordmark, stat numbers). */
+        --font-display: "Titillium Web", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
+
       * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
+      html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 var(--font);
+      }
       a { color: var(--accent); }
-      .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 20px 64px; }
+      .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 20px 72px; }
 
-      header.top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
-      .brand__mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; color: #fff; }
-      .brand__mark svg { width: 17px; height: 17px; }
-      .user { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); }
+      /* ---------- Header ---------- */
+      header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 30px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; font-size: 21px; letter-spacing: -0.01em; }
+      .brand__mark {
+        width: 36px; height: 36px; border-radius: 10px;
+        background: var(--accent); color: #fff; display: grid; place-items: center;
+      }
+      .brand__mark svg { width: 18px; height: 18px; }
+      .user { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+      .user__id { display: flex; align-items: center; gap: 9px; }
+      .avatar {
+        width: 30px; height: 30px; border-radius: 50%; flex: none;
+        display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12.5px;
+        background: var(--accent);
+      }
+      .user__email { color: var(--fg); font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-      .btn { border: 1px solid var(--border); background: #fff; color: var(--fg); border-radius: 10px; padding: 9px 14px; font: 600 14px var(--font); cursor: pointer; }
-      .btn:hover { background: #f3f4f6; }
+      /* ---------- Buttons ---------- */
+      .btn {
+        border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+        border-radius: var(--radius-sm); padding: 11px 18px; font: 700 14px var(--font); cursor: pointer;
+        transition: filter .15s ease, transform .15s ease, border-color .15s ease, background .15s ease;
+      }
+      .btn:hover { border-color: var(--muted-2); background: var(--surface-2); }
+      .btn:active { transform: scale(0.985); }
       .btn--primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-      .btn--primary:hover { filter: brightness(1.05); }
+      .btn--primary:hover { filter: brightness(1.05); background: var(--accent); border-color: var(--accent); }
+      .btn--google { display: inline-flex; align-items: center; gap: 10px; padding: 12px 20px; font-size: 15px; }
+      .btn--google svg { width: 18px; height: 18px; flex: none; }
 
-      .hero { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 48px 32px; text-align: center; }
-      .hero h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.02em; }
-      .hero p { margin: 0 auto 22px; max-width: 46ch; color: var(--muted); line-height: 1.5; }
+      /* ---------- Hero (signed out) ---------- */
+      .hero {
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 60px 34px; text-align: center; box-shadow: var(--shadow);
+      }
+      .hero__icon {
+        width: 56px; height: 56px; margin: 0 auto 22px; border-radius: 14px;
+        display: grid; place-items: center; color: #fff; background: var(--accent);
+      }
+      .hero__icon svg { width: 28px; height: 28px; }
+      .hero h1 { margin: 0 0 10px; font-family: var(--font-display); font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+      .hero p { margin: 0 auto 26px; max-width: 46ch; color: var(--muted); font-size: 15px; line-height: 1.6; }
+      .hero__note { margin-top: 20px; font-size: 12.5px; color: var(--muted-2); }
 
-      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-      .stat { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-      .stat__num { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
-      .stat__label { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+      /* ---------- Page heading ---------- */
+      .page-head { margin-bottom: 20px; }
+      .page-head h1 { margin: 0 0 3px; font-family: var(--font-display); font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+      .page-head p { margin: 0; color: var(--muted); font-size: 14px; }
 
-      .bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: #eef0f3; margin-bottom: 20px; }
-      .bar > span { display: block; }
-      .seg--started { background: #cbd5e1; }
-      .seg--applied { background: #60a5fa; }
-      .seg--interviewing { background: #f59e0b; }
-      .seg--offer { background: #10b981; }
-      .seg--rejected { background: #ef4444; }
+      /* ---------- Stats ---------- */
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+      .stat {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 18px 18px 16px;
+        transition: box-shadow .18s ease, border-color .18s ease;
+      }
+      .stat:hover { box-shadow: var(--shadow); border-color: var(--border-strong); }
+      .stat__ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; margin-bottom: 12px; }
+      .stat__ico svg { width: 18px; height: 18px; }
+      .stat__ico.i-track { background: var(--accent-soft); color: var(--accent); }
+      .stat__ico.i-applied { background: var(--accent-soft); color: var(--accent); }
+      .stat__ico.i-rate { background: var(--warn-soft); color: var(--warn); }
+      .stat__ico.i-offer { background: var(--ok-soft); color: var(--ok); }
+      .stat__num { font-family: var(--font-display); font-size: 29px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+      .stat__label { font-size: 12.5px; color: var(--muted); margin-top: 3px; font-weight: 500; }
 
-      .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-      .chip { border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 6px 12px; font: 600 13px var(--font); color: var(--muted); cursor: pointer; }
+      /* ---------- Distribution bar ---------- */
+      .dist { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px; }
+      .dist[hidden] { display: none; }
+      .bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--slate-soft); gap: 2px; }
+      .bar > span { display: block; min-width: 2px; transition: width .4s ease; }
+      .seg--started { background: var(--slate); }
+      .seg--applied { background: var(--accent); }
+      .seg--interviewing { background: var(--warn); }
+      .seg--offer { background: var(--ok); }
+      .seg--rejected { background: var(--bad); }
+      .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 13px; }
+      .legend span { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+      .legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
+      /* ---------- Filters ---------- */
+      .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+      .chip {
+        border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+        padding: 7px 14px; font: 600 13px var(--font); color: var(--muted); cursor: pointer;
+        transition: all .15s ease;
+      }
+      .chip:hover { color: var(--fg); border-color: var(--muted-2); }
       .chip.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-      .panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+      /* ---------- Table ---------- */
+      .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
       .table-scroll { overflow-x: auto; }
-      table { width: 100%; border-collapse: collapse; min-width: 640px; }
-      th, td { text-align: left; padding: 12px 14px; font-size: 14px; border-bottom: 1px solid #f0f1f3; vertical-align: middle; }
-      th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; min-width: 680px; }
+      th, td { text-align: left; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+      thead th { background: var(--surface-2); }
+      th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
+      tbody tr { transition: background .12s ease; }
+      tbody tr:hover { background: var(--surface-2); }
       tr:last-child td { border-bottom: none; }
-      .job__title { font-weight: 600; }
-      .job__title a { text-decoration: none; }
-      .job__title a:hover { text-decoration: underline; }
-      .muted { color: var(--muted); }
-      select.status { font: 600 13px var(--font); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: #fff; cursor: pointer; }
-      .status--applied { color: #1e40af; }
-      .status--interviewing { color: var(--warn); }
-      .status--offer { color: var(--ok); }
-      .status--rejected { color: var(--bad); }
-      .del { border: none; background: none; color: #9ca3af; font-size: 18px; cursor: pointer; line-height: 1; }
-      .del:hover { color: var(--bad); }
 
-      .empty { padding: 44px 24px; text-align: center; color: var(--muted); line-height: 1.6; }
-      .msg { text-align: center; color: var(--muted); padding: 40px; }
+      .cell-role { display: flex; align-items: center; gap: 11px; }
+      .logo {
+        width: 34px; height: 34px; border-radius: 9px; flex: none;
+        display: grid; place-items: center; font-weight: 700; font-size: 13.5px; color: #fff;
+      }
+      .job__title { font-weight: 600; color: var(--fg); }
+      .job__title a { text-decoration: none; color: var(--fg); }
+      .job__title a:hover { color: var(--accent); text-decoration: underline; }
+      .job__sub { font-size: 12px; color: var(--muted-2); margin-top: 1px; }
+      .muted { color: var(--muted); }
+
+      .src { display: inline-block; padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 600; background: var(--slate-soft); color: var(--slate); text-transform: capitalize; }
+
+      /* status select styled as a pill */
+      select.status {
+        font: 600 12.5px var(--font); border: 1px solid transparent; border-radius: 999px;
+        padding: 6px 26px 6px 12px; cursor: pointer; -webkit-appearance: none; appearance: none;
+        background-repeat: no-repeat; background-position: right 9px center; background-size: 10px;
+      }
+      select.status:focus { outline: none; box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.2); }
+      .status--started { background-color: var(--slate-soft); color: var(--slate); }
+      .status--applied { background-color: var(--accent-soft); color: var(--accent); }
+      .status--interviewing { background-color: var(--warn-soft); color: var(--warn); }
+      .status--offer { background-color: var(--ok-soft); color: var(--ok); }
+      .status--rejected { background-color: var(--bad-soft); color: var(--bad); }
+
+      .del {
+        border: 1px solid transparent; background: none; color: var(--muted-2); font-size: 15px; cursor: pointer;
+        line-height: 1; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+        opacity: 0; transition: all .14s ease;
+      }
+      tbody tr:hover .del { opacity: 1; }
+      .del:hover { color: var(--bad); background: var(--bad-soft); }
+
+      /* ---------- Empty / loading ---------- */
+      .empty { padding: 56px 24px; text-align: center; color: var(--muted); line-height: 1.6; }
+      .empty__ico { width: 54px; height: 54px; margin: 0 auto 16px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+      .empty__ico svg { width: 26px; height: 26px; }
+      .empty strong { display: block; color: var(--fg); font-size: 15.5px; margin-bottom: 4px; font-weight: 700; }
+
+      .msg { text-align: center; color: var(--muted); padding: 80px 40px; }
+      .spinner { width: 30px; height: 30px; margin: 0 auto 14px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); animation: spin .7s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
       [hidden] { display: none !important; }
 
-      @media (max-width: 640px) {
+      @media (max-width: 720px) {
         .stats { grid-template-columns: repeat(2, 1fr); }
+        .hero { padding: 48px 24px; }
+        .user__email { display: none; }
       }
     </style>
   </head>
@@ -92,19 +215,30 @@
         <div class="user" data-el="user"></div>
       </header>
 
-      <div class="msg" data-el="loading">Loading…</div>
+      <div class="msg" data-el="loading"><div class="spinner"></div>Loading your applications…</div>
 
       <section data-el="signed-out" hidden>
         <div class="hero">
-          <h1>Your applications</h1>
+          <div class="hero__icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>
+          </div>
+          <h1>Track every application in one place</h1>
           <p>Sign in to see and analyze every job you've applied to with the Tvarin extension — statuses, response rate, and more.</p>
-          <button class="btn btn--primary" data-el="signin">Sign in with Google</button>
+          <button class="btn btn--primary btn--google" data-el="signin">
+            <svg viewBox="0 0 24 24"><path fill="#fff" d="M12 11v2.8h4.6c-.2 1.2-1.5 3.5-4.6 3.5-2.8 0-5-2.3-5-5.1s2.2-5.1 5-5.1c1.6 0 2.6.7 3.2 1.2l2.2-2.1C16 4.6 14.2 3.8 12 3.8 7.7 3.8 4.2 7.3 4.2 11.6S7.7 19.4 12 19.4c4.6 0 7.6-3.2 7.6-7.7 0-.5 0-.9-.1-1.3H12z"/></svg>
+            Sign in with Google
+          </button>
+          <div class="hero__note">Your data stays private — only you can see your applications.</div>
         </div>
       </section>
 
       <section data-el="signed-in" hidden>
+        <div class="page-head">
+          <h1>Your applications</h1>
+          <p>Everything you've applied to, synced from the Tvarin extension.</p>
+        </div>
         <div class="stats" data-el="stats"></div>
-        <div class="bar" data-el="bar" hidden></div>
+        <div class="dist" data-el="bar" hidden></div>
         <div class="filters" data-el="filters"></div>
         <div class="panel">
           <div class="table-scroll">
@@ -116,7 +250,9 @@
             </table>
           </div>
           <div class="empty" data-el="empty" hidden>
-            No applications yet. Fill and submit jobs with the Tvarin extension and they'll appear here.
+            <div class="empty__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+            <strong>No applications yet</strong>
+            Fill and submit jobs with the Tvarin extension and they'll appear here automatically.
           </div>
         </div>
       </section>

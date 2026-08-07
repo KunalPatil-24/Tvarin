@@ -44,6 +44,33 @@ function timeAgo(iso) {
   return d < 30 ? `${d}d ago` : new Date(iso).toLocaleDateString();
 }
 
+// Deterministic flat color for a company avatar based on its name.
+const AVATAR_COLORS = [
+  "#2f6fed", "#0ea5e9", "#059669", "#b45309",
+  "#dc2626", "#7c3aed", "#0891b2", "#db2777",
+];
+function avatarFor(name) {
+  const s = String(name || "?").trim();
+  const initial = s ? s[0].toUpperCase() : "?";
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  const color = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return { initial, style: `background:${color}` };
+}
+
+// Chevron shown inside the status pill; color follows the pill text color.
+function statusBg(color) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='${color}' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+const STATUS_COLORS = {
+  started: "#64748b",
+  applied: "#2f6fed",
+  interviewing: "#b45309",
+  offer: "#059669",
+  rejected: "#dc2626",
+};
+
 async function init() {
   const { data } = await client.auth.getSession();
   render(data && data.session);
@@ -71,7 +98,11 @@ async function render(session) {
   el("signed-out").hidden = true;
   el("signed-in").hidden = false;
   const email = session.user && session.user.email ? session.user.email : "";
-  userBox.innerHTML = `<span>${esc(email)}</span> <button class="btn" id="signout">Sign out</button>`;
+  const av = avatarFor(email || "?");
+  userBox.innerHTML =
+    `<span class="user__id"><span class="avatar" style="${av.style}">${esc(av.initial)}</span>` +
+    `<span class="user__email">${esc(email)}</span></span>` +
+    `<button class="btn" id="signout">Sign out</button>`;
   $("#signout").addEventListener("click", async () => {
     await client.auth.signOut();
   });
@@ -104,25 +135,40 @@ function renderStats() {
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const thisWeek = submitted.filter((a) => new Date(a.updated_at).getTime() >= weekAgo).length;
 
-  const tile = (num, label) => `<div class="stat"><div class="stat__num">${num}</div><div class="stat__label">${label}</div></div>`;
+  const ICONS = {
+    track: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg>`,
+    applied: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>`,
+    rate: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg>`,
+    offer: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a7 7 0 1 0 0-14 7 7 0 0 0 0 14z"/><path d="M8.2 13.8 7 22l5-3 5 3-1.2-8.2"/></svg>`,
+  };
+  const tile = (key, cls, num, label) =>
+    `<div class="stat"><div class="stat__ico ${cls}">${ICONS[key]}</div>` +
+    `<div class="stat__num">${num}</div><div class="stat__label">${label}</div></div>`;
   el("stats").innerHTML =
-    tile(apps.length, "Tracked") +
-    tile(submitted.length, "Applied") +
-    tile(`${rate}%`, "Response rate") +
-    tile(offers.length, "Offers");
+    tile("track", "i-track", apps.length, "Tracked") +
+    tile("applied", "i-applied", submitted.length, "Applied") +
+    tile("rate", "i-rate", `${rate}%`, "Response rate") +
+    tile("offer", "i-offer", offers.length, "Offers");
 
-  // Stage distribution bar.
+  // Stage distribution bar + legend.
   const bar = el("bar");
   if (!apps.length) {
     bar.hidden = true;
     return;
   }
   bar.hidden = false;
-  bar.innerHTML = STAGES.map(([k]) => {
-    const n = apps.filter((a) => (a.status || "started") === k).length;
-    const pct = (100 * n) / apps.length;
-    return pct ? `<span class="seg--${k}" style="width:${pct}%" title="${STAGE_LABEL[k]}: ${n}"></span>` : "";
-  }).join("");
+  const counts = STAGES.map(([k]) => [k, apps.filter((a) => (a.status || "started") === k).length]);
+  const segs = counts
+    .map(([k, n]) => {
+      const pct = (100 * n) / apps.length;
+      return pct ? `<span class="seg--${k}" style="width:${pct}%" title="${STAGE_LABEL[k]}: ${n}"></span>` : "";
+    })
+    .join("");
+  const legend = counts
+    .filter(([, n]) => n)
+    .map(([k, n]) => `<span><i class="seg--${k}"></i>${STAGE_LABEL[k]} · ${n}</span>`)
+    .join("");
+  bar.innerHTML = `<div class="bar">${segs}</div><div class="legend">${legend}</div>`;
 }
 
 function renderFilters() {
@@ -156,19 +202,29 @@ function renderRows() {
   rows.innerHTML = list
     .map((a) => {
       const status = a.status || "started";
+      const company = a.company || a.hostname || "";
       const title = esc(a.job_title || a.hostname || "Application");
-      const titleCell = a.url
+      const titleInner = a.url
         ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${title}</a>`
         : title;
+      const av = avatarFor(company || title);
+      const sub = a.hostname && a.hostname !== company ? `<div class="job__sub">${esc(a.hostname)}</div>` : "";
+      const src = a.ats ? `<span class="src">${esc(a.ats)}</span>` : `<span class="muted">—</span>`;
+      const chevron = statusBg(STATUS_COLORS[status] || "#64748b");
       const opts = STAGES.map(
         ([k, label]) => `<option value="${k}"${k === status ? " selected" : ""}>${label}</option>`
       ).join("");
       return `
         <tr data-id="${esc(a.id)}">
-          <td class="job__title">${titleCell}</td>
-          <td class="muted">${esc(a.company || a.hostname || "")}</td>
-          <td class="muted">${esc(a.ats || "")}</td>
-          <td><select class="status status--${status}" data-id="${esc(a.id)}">${opts}</select></td>
+          <td>
+            <div class="cell-role">
+              <span class="logo" style="${av.style}">${esc(av.initial)}</span>
+              <div><div class="job__title">${titleInner}</div>${sub}</div>
+            </div>
+          </td>
+          <td class="muted">${esc(company)}</td>
+          <td>${src}</td>
+          <td><select class="status status--${status}" data-id="${esc(a.id)}" style="background-image:${chevron}">${opts}</select></td>
           <td class="muted">${timeAgo(a.updated_at)}</td>
           <td><button class="del" data-id="${esc(a.id)}" title="Remove">×</button></td>
         </tr>`;
