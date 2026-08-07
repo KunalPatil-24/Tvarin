@@ -10,6 +10,7 @@ create table if not exists public.applications (
   hostname      text,
   job_title     text,
   company       text,
+  job_description text,                                   -- full JD captured at apply-time
   ats           text,
   status        text not null default 'started',        -- started|applied|interviewing|offer|rejected
   filled        integer,
@@ -17,6 +18,9 @@ create table if not exists public.applications (
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
+
+-- Backfill for tables created before job_description existed. No-op if present.
+alter table public.applications add column if not exists job_description text;
 
 create index if not exists applications_user_idx on public.applications (user_id, updated_at desc);
 

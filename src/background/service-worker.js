@@ -374,6 +374,18 @@ function localUpdated(a) {
   return toMs(a.updatedAt || a.appliedAt || a.timestamp);
 }
 
+// Abandoned "started" fills (filled but never submitted) are cleaned up after
+// this long so the tracker and dashboard don't accumulate half-finished rows.
+// Anything promoted to "applied" (or beyond) is kept forever.
+const STARTED_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+function isStaleStarted(a, now) {
+  if (!a || (a.status || "started") !== "started") return false;
+  const ts = localUpdated(a);
+  // Guard rows with unknown age (ts === 0): never expire what we can't date.
+  return ts > 0 && now - ts > STARTED_TTL_MS;
+}
+
 function isJunkApp(a) {
   const hay = `${a.hostname || ""} ${a.jobTitle || ""} ${a.url || ""}`;
   return /recaptcha|googleapis\.com|gstatic\.com/i.test(hay);
@@ -389,6 +401,7 @@ function localFromServer(row) {
     hostname: row.hostname || "",
     jobTitle: row.job_title || "",
     company: row.company || "",
+    jobDescription: row.job_description || "",
     ats: row.ats || "",
     status,
     filled: typeof row.filled === "number" ? row.filled : undefined,
@@ -408,6 +421,7 @@ function serverFromLocal(a) {
     hostname: a.hostname || null,
     job_title: a.jobTitle || null,
     company: a.company || null,
+    job_description: a.jobDescription || null,
     ats: a.ats || null,
     status: a.status || "started",
     filled: typeof a.filled === "number" ? a.filled : null,
@@ -455,6 +469,29 @@ async function syncApplications() {
     let localApps = (data[KEYS.applications] || [])
       .filter((a) => a && !isJunkApp(a))
       .map((a) => (a.id ? a : { ...a, id: newAppId(a.timestamp) }));
+
+    // 2b. Expire abandoned "started" rows (never promoted to "applied") past the
+    //     TTL — delete them server-side and drop them locally BEFORE the merge,
+    //     otherwise a still-present server row would be merged straight back.
+    const now = Date.now();
+    const staleServerIds = serverRows
+      .filter((r) => isStaleStarted(localFromServer(r), now))
+      .map((r) => r.id);
+    if (staleServerIds.length) {
+      try {
+        // status=eq.started guards against deleting a row a dashboard edit
+        // promoted between our pull and this delete.
+        await fetch(
+          `${APPLICATIONS_ENDPOINT}?id=in.(${staleServerIds.join(",")})&status=eq.started`,
+          { method: "DELETE", headers }
+        );
+      } catch (e) {
+        console.warn("[Tvarin] expire delete network error:", e && e.message);
+      }
+      const stale = new Set(staleServerIds);
+      serverRows = serverRows.filter((r) => !stale.has(r.id));
+    }
+    localApps = localApps.filter((a) => !isStaleStarted(a, now));
 
     const syncedIds = new Set(data[KEYS.syncedIds] || []);
     const serverById = new Map(serverRows.map((r) => [r.id, r]));
@@ -904,5 +941,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
+// Signed-out hygiene: with no server to sync against, expire abandoned "started"
+// rows locally. Signed-in users get this inside syncApplications (which also
+// deletes them server-side), so skip it there to avoid fighting the merge.
+async function pruneStaleStartedLocal() {
+  const data = await get([KEYS.session, KEYS.applications]);
+  const session = data[KEYS.session];
+  if (session && session.access_token) return; // signed in → sync owns expiry
+  const list = data[KEYS.applications] || [];
+  const now = Date.now();
+  const kept = list.filter((a) => !isStaleStarted(a, now));
+  if (kept.length !== list.length) {
+    await set({ [KEYS.applications]: kept });
+    console.log(`[Tvarin] expired ${list.length - kept.length} stale 'started' app(s) locally.`);
+  }
+}
+
 // Catch-up sync shortly after the worker wakes (covers apps logged while offline).
+pruneStaleStartedLocal();
 scheduleSync(4000);

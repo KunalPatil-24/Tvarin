@@ -43,6 +43,15 @@ function timeAgo(iso) {
   const d = Math.floor(h / 24);
   return d < 30 ? `${d}d ago` : new Date(iso).toLocaleDateString();
 }
+function fmtDate(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return "—";
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 // Deterministic flat color for a company avatar based on its name.
 const AVATAR_COLORS = [
@@ -81,6 +90,11 @@ async function init() {
       provider: "google",
       options: { redirectTo: window.location.href.split("#")[0].split("?")[0] },
     });
+  });
+
+  el("overlay").addEventListener("click", closeDetail);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDetail();
   });
 }
 
@@ -203,10 +217,10 @@ function renderRows() {
     .map((a) => {
       const status = a.status || "started";
       const company = a.company || a.hostname || "";
+      // Plain title: clicking the row opens the detail drawer (which holds the
+      // saved JD and a link to the original posting), so the title isn't a
+      // competing link.
       const title = esc(a.job_title || a.hostname || "Application");
-      const titleInner = a.url
-        ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${title}</a>`
-        : title;
       const av = avatarFor(company || title);
       const sub = a.hostname && a.hostname !== company ? `<div class="job__sub">${esc(a.hostname)}</div>` : "";
       const src = a.ats ? `<span class="src">${esc(a.ats)}</span>` : `<span class="muted">—</span>`;
@@ -219,7 +233,7 @@ function renderRows() {
           <td>
             <div class="cell-role">
               <span class="logo" style="${av.style}">${esc(av.initial)}</span>
-              <div><div class="job__title">${titleInner}</div>${sub}</div>
+              <div><div class="job__title">${title}</div>${sub}</div>
             </div>
           </td>
           <td class="muted">${esc(company)}</td>
@@ -236,6 +250,14 @@ function renderRows() {
   });
   rows.querySelectorAll("button.del").forEach((btn) => {
     btn.addEventListener("click", () => removeRow(btn.getAttribute("data-id")));
+  });
+  // Click anywhere on a row (except the status/delete/link controls) to open
+  // the detail drawer.
+  rows.querySelectorAll("tr[data-id]").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("select, button, a")) return;
+      openDetail(tr.getAttribute("data-id"));
+    });
   });
 }
 
@@ -263,6 +285,60 @@ async function removeRow(id) {
   renderStats();
   renderFilters();
   renderRows();
+}
+
+// ---------- Detail drawer ----------
+const EXT_ICON =
+  `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>`;
+
+function openDetail(id) {
+  const a = apps.find((x) => x.id === id);
+  if (!a) return;
+  const status = a.status || "started";
+  const company = a.company || a.hostname || "";
+  const title = a.job_title || a.hostname || "Application";
+  const av = avatarFor(company || title);
+  const jd = (a.job_description || "").trim();
+  const meta = (k, v) => `<div><div class="meta__k">${k}</div><div class="meta__v">${v}</div></div>`;
+  const sub =
+    a.hostname && a.hostname !== company ? ` · ${esc(a.hostname)}` : "";
+  const link = a.url
+    ? `<a class="drawer__link" href="${esc(a.url)}" target="_blank" rel="noopener">Open original posting ${EXT_ICON}</a>`
+    : "";
+
+  const drawer = el("drawer");
+  drawer.innerHTML =
+    `<div class="drawer__head">
+       <span class="drawer__logo" style="${av.style}">${esc(av.initial)}</span>
+       <div class="drawer__titlewrap">
+         <div class="drawer__title">${esc(title)}</div>
+         <div class="drawer__company">${esc(company)}${sub}</div>
+       </div>
+       <button class="drawer__close" data-close aria-label="Close">×</button>
+     </div>
+     <div class="drawer__body">
+       <div class="drawer__meta">
+         ${meta("Status", `<span class="pill status--${status}">${esc(STAGE_LABEL[status] || status)}</span>`)}
+         ${meta("Source", a.ats ? esc(a.ats) : "—")}
+         ${meta("Added", fmtDate(a.created_at))}
+         ${meta("Updated", fmtDate(a.updated_at))}
+       </div>
+       ${link}
+       <div class="jd__label">Job description</div>
+       ${
+         jd
+           ? `<div class="jd">${esc(jd)}</div>`
+           : `<div class="jd jd--empty">No job description was captured for this application.</div>`
+       }
+     </div>`;
+  drawer.hidden = false;
+  el("overlay").hidden = false;
+  drawer.querySelector("[data-close]").addEventListener("click", closeDetail);
+}
+
+function closeDetail() {
+  el("drawer").hidden = true;
+  el("overlay").hidden = true;
 }
 
 init();

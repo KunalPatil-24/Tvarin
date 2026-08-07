@@ -80,70 +80,88 @@
     return h;
   }
 
-  function logApplication(entry) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(STORAGE_KEYS.applications, (res) => {
-        const list = res[STORAGE_KEYS.applications] || [];
-        list.unshift(entry);
-        chrome.storage.local.set(
-          { [STORAGE_KEYS.applications]: list.slice(0, 500) },
-          resolve
-        );
-      });
-    });
+  // Stable id, generated at row creation so the *same* row is what later syncs
+  // to the server and gets updated — one row per job on both sides.
+  function newAppId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
-  // Promote an in-progress ("started") fill to "applied", or create a new applied
-  // entry. Fill alone never means the user submitted — only a real Submit click.
-  function markApplicationApplied(meta = {}) {
+  // Normalise a job URL for identity comparison: drop the #hash, the ?query, the
+  // "/apply..." step suffix, and any trailing slash.
+  function normJobUrl(u) {
+    return String(u || "")
+      .split("#")[0]
+      .split("?")[0]
+      .replace(/\/apply\/?.*$/i, "")
+      .replace(/\/$/, "");
+  }
+
+  // Two rows are the same job when they share a host and either the same title
+  // or the same normalised URL. Single source of truth for "same job" — both the
+  // fill and the submit path key on this, so they can never drift apart.
+  function sameJob(a, job) {
+    if (!a || !job) return false;
+    if ((a.hostname || "") !== (job.hostname || "")) return false;
+    if (a.jobTitle && job.jobTitle && a.jobTitle === job.jobTitle) return true;
+    return normJobUrl(a.url) === normJobUrl(job.url);
+  }
+
+  // Within this window a repeat fill/submit updates the existing row; past it
+  // (e.g. a job reposted months later) a fresh row is created.
+  const ACTIVE_APP_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+  // Pipeline order. Automated writes (fill→started, submit→applied) and manual
+  // tracker edits (interviewing/offer/rejected) all flow through the upsert, so
+  // it must never move a row *backward* — a re-fill can't undo "interviewing".
+  const STATUS_RANK = { started: 0, applied: 1, interviewing: 2, offer: 3, rejected: 3 };
+  const rank = (s) => STATUS_RANK[s] ?? 0;
+  // Cap the stored JD: we only hold the `storage` permission (no unlimitedStorage),
+  // and the row list is capped at 500, so keep each description bounded.
+  const JD_STORE_MAX = 6000;
+
+  // Insert-or-update an application row, keyed on job identity. Replaces the old
+  // logApplication (fill) + markApplicationApplied (submit) pair: the fill path
+  // had no dedup, so filling one job N times left N rows. Now both funnel through
+  // here — one row per job, promoted on submit and never downgraded on re-fill.
+  function upsertApplication(entry) {
     return new Promise((resolve) => {
       chrome.storage.local.get(STORAGE_KEYS.applications, (res) => {
         const list = res[STORAGE_KEYS.applications] || [];
         const now = Date.now();
-        const job = {
-          url: (meta.url || location.href).split("#")[0],
-          hostname: meta.hostname || location.hostname,
-          jobTitle: (meta.jobTitle || bestEffortJobTitle()).slice(0, 200),
-          company: (meta.company || bestEffortCompany()).slice(0, 200),
-          ats: meta.ats || (pickAdapter() && pickAdapter().name) || "generic",
-        };
 
-        const norm = (u) =>
-          String(u || "")
-            .split("?")[0]
-            .replace(/\/apply\/?.*$/i, "")
-            .replace(/\/$/, "");
-
-        const sameJob = (a) => {
-          if (!a) return false;
-          if ((a.hostname || "") !== job.hostname) return false;
-          if (a.jobTitle && job.jobTitle && a.jobTitle === job.jobTitle) return true;
-          return norm(a.url) === norm(job.url);
-        };
-
-        // Prefer upgrading a recent "started" row for this job (last 7 days).
         const idx = list.findIndex(
-          (a) =>
-            sameJob(a) &&
-            a.status !== "applied" &&
-            now - (a.timestamp || 0) < 7 * 24 * 60 * 60 * 1000
+          (a) => sameJob(a, entry) && now - (a.timestamp || 0) < ACTIVE_APP_WINDOW_MS
         );
 
         if (idx >= 0) {
-          list[idx] = {
-            ...list[idx],
-            ...job,
-            status: "applied",
-            appliedAt: now,
-            timestamp: now,
+          const prev = list[idx];
+          // Keep whichever status is furthest along — never move backward.
+          const incoming = entry.status || prev.status;
+          const status = rank(prev.status) >= rank(incoming) ? prev.status : incoming;
+          const merged = {
+            ...prev,
+            ...entry,
+            id: prev.id || newAppId(),
+            status,
+            // A confirmation page scrapes a worse JD than the apply page did, so
+            // keep the first non-empty description instead of clobbering it.
+            jobDescription: (prev.jobDescription || entry.jobDescription || "").slice(0, JD_STORE_MAX),
+            timestamp: prev.timestamp || now, // created: stable, never bumped
+            // Stamp appliedAt the first time the row reaches "applied" or beyond.
+            appliedAt: rank(status) >= rank("applied") ? prev.appliedAt || now : prev.appliedAt,
+            updatedAt: now, // modified: bumps "last worked on" without moving created
           };
-        } else if (!list.some((a) => sameJob(a) && a.status === "applied" && now - (a.appliedAt || a.timestamp || 0) < 60 * 1000)) {
-          // Avoid double-logging the same Submit within a minute.
+          // Move the touched row to the top so recent work shows first.
+          list.splice(idx, 1);
+          list.unshift(merged);
+        } else {
           list.unshift({
-            ...job,
-            status: "applied",
-            appliedAt: now,
+            ...entry,
+            id: newAppId(),
+            jobDescription: (entry.jobDescription || "").slice(0, JD_STORE_MAX),
             timestamp: now,
+            appliedAt: rank(entry.status) >= rank("applied") ? now : undefined,
+            updatedAt: now,
           });
         }
 
@@ -152,6 +170,21 @@
           resolve
         );
       });
+    });
+  }
+
+  // Record "applied" on a real Submit click. Thin wrapper: builds the row from
+  // adapter/page metadata, then upserts so it merges into the fill's "started"
+  // row for the same job rather than creating a duplicate.
+  function markApplicationApplied(meta = {}) {
+    return upsertApplication({
+      url: (meta.url || location.href).split("#")[0],
+      hostname: meta.hostname || location.hostname,
+      jobTitle: (meta.jobTitle || bestEffortJobTitle()).slice(0, 200),
+      company: (meta.company || bestEffortCompany()).slice(0, 200),
+      ats: meta.ats || (pickAdapter() && pickAdapter().name) || "generic",
+      jobDescription: meta.jobDescription || bestEffortJobDescription(),
+      status: "applied",
     });
   }
 
@@ -6004,18 +6037,20 @@
       // Adapters may supply better metadata than the page-scrape heuristics
       // (e.g. Google Forms, where hostname is always docs.google.com).
       const meta = result.meta || {};
-      await logApplication({
-        url: location.href,
+      await upsertApplication({
+        url: location.href.split("#")[0],
         hostname: location.hostname,
         jobTitle: (meta.jobTitle || bestEffortJobTitle()).slice(0, 200),
         company: (meta.company || bestEffortCompany()).slice(0, 200),
         ats: adapter.name,
+        // Capture the JD now, while the posting is guaranteed on screen — the
+        // record survives even after the posting is taken down.
+        jobDescription: meta.jobDescription || bestEffortJobDescription(),
         filled,
         steps,
         stopReason,
         resumeAttached,
         status: "started",
-        timestamp: Date.now(),
       });
     }
 
