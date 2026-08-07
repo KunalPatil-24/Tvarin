@@ -186,6 +186,16 @@
       tbody tr:hover .del { opacity: 1; }
       .del:hover { color: var(--bad); background: var(--bad-soft); }
 
+      /* Inline note editor (bookmarks) */
+      .note-input {
+        width: 100%; min-width: 150px; border: 1px solid var(--border); border-radius: 8px;
+        padding: 7px 9px; font: 500 13px var(--font); color: var(--fg); background: var(--surface);
+      }
+      .note-input::placeholder { color: var(--muted-2); font-weight: 400; }
+      .note-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.16); }
+      .job__title a .ext { vertical-align: -1px; margin-left: 3px; opacity: .55; }
+      .section-gap { margin-top: 36px; }
+
       /* ---------- Detail drawer ---------- */
       .drawer-overlay { position: fixed; inset: 0; background: rgba(17, 24, 39, 0.28); z-index: 40; animation: fade .15s ease; }
       .drawer {
@@ -251,7 +261,7 @@
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>
           </div>
           <h1>Track every application in one place</h1>
-          <p>Sign in to see and analyze every job you've applied to with the Tvarin extension — statuses, response rate, and more.</p>
+          <p>Sign in to see and analyze every job you've applied to — or bookmarked for later — with the Tvarin extension. Statuses, response rate, and more.</p>
           <button class="btn btn--primary btn--google" data-el="signin">
             <svg viewBox="0 0 24 24"><path fill="#fff" d="M12 11v2.8h4.6c-.2 1.2-1.5 3.5-4.6 3.5-2.8 0-5-2.3-5-5.1s2.2-5.1 5-5.1c1.6 0 2.6.7 3.2 1.2l2.2-2.1C16 4.6 14.2 3.8 12 3.8 7.7 3.8 4.2 7.3 4.2 11.6S7.7 19.4 12 19.4c4.6 0 7.6-3.2 7.6-7.7 0-.5 0-.9-.1-1.3H12z"/></svg>
             Sign in with Google
@@ -281,6 +291,26 @@
             <div class="empty__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
             <strong>No applications yet</strong>
             Fill and submit jobs with the Tvarin extension and they'll appear here automatically.
+          </div>
+        </div>
+
+        <div class="page-head section-gap">
+          <h1>Saved for later</h1>
+          <p>Jobs you bookmarked to decide on — nothing here expires, so referrals never slip.</p>
+        </div>
+        <div class="panel">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Role</th><th>Company</th><th>Source</th><th>Note</th><th>Saved</th><th></th></tr>
+              </thead>
+              <tbody data-el="bmk-rows"></tbody>
+            </table>
+          </div>
+          <div class="empty" data-el="bmk-empty" hidden>
+            <div class="empty__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.9.5L12 18l-6.1 3.4a.6.6 0 0 1-.9-.5V5a1 1 0 0 1 1-1z"/></svg></div>
+            <strong>No bookmarks yet</strong>
+            On any job page, hit “Bookmark this page” in the Tvarin extension and it'll show up here.
           </div>
         </div>
       </section>

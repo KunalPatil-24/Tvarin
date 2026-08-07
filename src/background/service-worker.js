@@ -19,6 +19,10 @@ const KEYS = {
   // IDs we've successfully pushed at least once. Needed so "missing from
   // server" means "deleted on the dashboard" — not "never uploaded yet".
   syncedIds: "tvarin.syncedAppIds",
+  // Manually-saved jobs ("bookmark for later"). Own list + own tombstone set,
+  // synced two-way just like applications but without status/TTL.
+  bookmarks: "tvarin.bookmarks",
+  syncedBookmarkIds: "tvarin.syncedBookmarkIds",
   // Saved logins. Each entry: { id, origin, label, username, iv, ct,
   // createdAt, updatedAt, lastUsedAt }. `iv`/`ct` are the device-key-encrypted
   // password (see src/lib/vault-crypto.js) — never the plaintext.
@@ -30,6 +34,7 @@ const MATCH_ENDPOINT = `${SUPABASE_URL}/functions/v1/match`;
 const TOKEN_ENDPOINT = `${SUPABASE_URL}/auth/v1/token`;
 const AUTHORIZE_ENDPOINT = `${SUPABASE_URL}/auth/v1/authorize`;
 const APPLICATIONS_ENDPOINT = `${SUPABASE_URL}/rest/v1/applications`;
+const BOOKMARKS_ENDPOINT = `${SUPABASE_URL}/rest/v1/bookmarks`;
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") chrome.runtime.openOptionsPage();
@@ -581,11 +586,183 @@ async function syncApplications() {
   return syncInFlight;
 }
 
-// Sync whenever the local applications list changes (debounced).
+// Sync whenever the local applications or bookmarks list changes (debounced).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || suppressSync) return;
   if (changes[KEYS.applications]) scheduleSync();
+  if (changes[KEYS.bookmarks]) scheduleBookmarkSync();
 });
+
+/* ----- Bookmarks two-way sync -----
+ *
+ * Same shape as the applications sync above, minus the pieces bookmarks don't
+ * have: no status pipeline and no started-TTL expiry (a bookmark is meant to
+ * sit untouched for as long as the user is waiting on a referral). Merge rule:
+ * newer of (server, local) by updatedAt wins; a local id we've synced before
+ * that's now gone from the server was deleted on the dashboard, so we drop it.
+ */
+
+let bookmarkSyncTimer = null;
+let bookmarkSyncInFlight = null;
+
+function scheduleBookmarkSync(delay = 1500) {
+  if (bookmarkSyncTimer) clearTimeout(bookmarkSyncTimer);
+  bookmarkSyncTimer = setTimeout(() => {
+    bookmarkSyncTimer = null;
+    syncBookmarks();
+  }, delay);
+}
+
+function bmkUpdated(b) {
+  return toMs(b.updatedAt || b.createdAt);
+}
+
+function localBookmarkFromServer(row) {
+  const createdAt = toMs(row.created_at) || Date.now();
+  const updatedAt = toMs(row.updated_at) || createdAt;
+  return {
+    id: row.id,
+    url: row.url || "",
+    hostname: row.hostname || "",
+    jobTitle: row.job_title || "",
+    company: row.company || "",
+    ats: row.ats || "",
+    note: row.note || "",
+    createdAt,
+    updatedAt,
+  };
+}
+
+function serverBookmarkFromLocal(b) {
+  const iso = (t) => new Date(toMs(t) || Date.now()).toISOString();
+  return {
+    id: b.id,
+    url: b.url || null,
+    hostname: b.hostname || null,
+    job_title: b.jobTitle || null,
+    company: b.company || null,
+    ats: b.ats || null,
+    note: b.note || null,
+    created_at: iso(b.createdAt),
+    updated_at: iso(b.updatedAt || b.createdAt),
+  };
+}
+
+async function syncBookmarks() {
+  if (bookmarkSyncInFlight) return bookmarkSyncInFlight;
+  bookmarkSyncInFlight = (async () => {
+    const data = await get([KEYS.session, KEYS.bookmarks, KEYS.syncedBookmarkIds]);
+    const session = data[KEYS.session];
+    if (!session || !session.access_token) return;
+    const token = await validAccessToken(session);
+    if (!token) return;
+
+    const headers = {
+      apikey: SUPABASE_ANON_KEY,
+      authorization: `Bearer ${token}`,
+    };
+
+    // 1. Pull current server state.
+    let serverRows = [];
+    try {
+      const pull = await fetch(
+        `${BOOKMARKS_ENDPOINT}?select=*&order=created_at.desc`,
+        { headers }
+      );
+      if (!pull.ok) {
+        const detail = await pull.text().catch(() => "");
+        console.warn(`[Tvarin] bookmarks pull failed: ${pull.status} — ${detail}`);
+        return;
+      }
+      const body = await pull.json();
+      serverRows = Array.isArray(body) ? body : [];
+    } catch (e) {
+      console.warn("[Tvarin] bookmarks pull network error:", e && e.message);
+      return;
+    }
+
+    // 2. Local: assign stable ids to anything missing one.
+    const localBmks = (data[KEYS.bookmarks] || [])
+      .filter((b) => b)
+      .map((b) => (b.id ? b : { ...b, id: newAppId(b.createdAt) }));
+
+    const syncedIds = new Set(data[KEYS.syncedBookmarkIds] || []);
+    const serverById = new Map(serverRows.map((r) => [r.id, r]));
+    const localById = new Map(localBmks.map((b) => [b.id, b]));
+
+    // 3. Merge.
+    const merged = [];
+    const seen = new Set();
+
+    for (const row of serverRows) {
+      const local = localById.get(row.id);
+      const fromServer = localBookmarkFromServer(row);
+      if (local && bmkUpdated(local) > bmkUpdated(fromServer)) merged.push(local);
+      else merged.push(fromServer);
+      seen.add(row.id);
+    }
+
+    let droppedDeleted = 0;
+    for (const b of localBmks) {
+      if (seen.has(b.id)) continue;
+      if (syncedIds.has(b.id) && !serverById.has(b.id)) {
+        droppedDeleted++;
+        continue; // deleted on the dashboard — don't resurrect
+      }
+      merged.push(b); // new local bookmark, not yet on server
+      seen.add(b.id);
+    }
+
+    const nextLocal = merged.slice(0, 500);
+    const keptIds = new Set(nextLocal.map((b) => b.id).filter(Boolean));
+    const prunedSynced = [...syncedIds].filter((id) => keptIds.has(id));
+
+    suppressSync = true;
+    await set({
+      [KEYS.bookmarks]: nextLocal,
+      [KEYS.syncedBookmarkIds]: prunedSynced,
+    });
+    suppressSync = false;
+
+    if (!nextLocal.length) {
+      if (droppedDeleted) {
+        console.log(`[Tvarin] sync: dropped ${droppedDeleted} dashboard-deleted bookmark(s).`);
+      }
+      return;
+    }
+
+    // 4. Push the merged set (upsert).
+    try {
+      const res = await fetch(`${BOOKMARKS_ENDPOINT}?on_conflict=id`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body: JSON.stringify(nextLocal.map(serverBookmarkFromLocal)),
+      });
+      if (res.ok) {
+        suppressSync = true;
+        await set({ [KEYS.syncedBookmarkIds]: [...keptIds] });
+        suppressSync = false;
+        console.log(
+          `[Tvarin] bookmarks sync ok: ${nextLocal.length}` +
+            (droppedDeleted ? `, dropped ${droppedDeleted} deleted` : "") +
+            "."
+        );
+      } else {
+        const detail = await res.text().catch(() => "");
+        console.warn(`[Tvarin] bookmarks push failed: ${res.status} — ${detail}`);
+      }
+    } catch (e) {
+      console.warn("[Tvarin] bookmarks push network error:", e && e.message);
+    }
+  })().finally(() => {
+    bookmarkSyncInFlight = null;
+  });
+  return bookmarkSyncInFlight;
+}
 
 /* ----- Saved logins (device-key-encrypted password vault) -----
  *
@@ -830,6 +1007,7 @@ function generatePassword(length = 20) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "TVARIN_OPEN_DASHBOARD") {
     scheduleSync(0); // flush latest before the dashboard loads
+    scheduleBookmarkSync(0);
     chrome.tabs.create({ url: DASHBOARD_URL });
     sendResponse({ ok: true });
     return;
@@ -849,6 +1027,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     signInWithGoogle()
       .then((session) => {
         scheduleSync(500); // push any local applications now that we're signed in
+        scheduleBookmarkSync(600);
         sendResponse({ ok: true, session });
       })
       .catch((e) =>
@@ -957,6 +1136,8 @@ async function pruneStaleStartedLocal() {
   }
 }
 
-// Catch-up sync shortly after the worker wakes (covers apps logged while offline).
+// Catch-up sync shortly after the worker wakes (covers apps/bookmarks made
+// while the worker was asleep or offline).
 pruneStaleStartedLocal();
 scheduleSync(4000);
+scheduleBookmarkSync(4500);

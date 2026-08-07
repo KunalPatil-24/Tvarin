@@ -22,6 +22,9 @@
   const STORAGE_KEYS = {
     profile: "tvarin.profile",
     applications: "tvarin.applications",
+    // Jobs saved by hand ("bookmark this for later"). Separate from applications:
+    // manual, never auto-expired, no pipeline status — see section 1b.
+    bookmarks: "tvarin.bookmarks",
     settings: "tvarin.settings",
     resume: "tvarin.resume",
     // Per-ATS remembered school picks: { [hostKey]: [{ from, to }, ...] }
@@ -186,6 +189,72 @@
       jobDescription: meta.jobDescription || bestEffortJobDescription(),
       status: "applied",
     });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 1b. Bookmarks — manually "save this job for later"
+   * ------------------------------------------------------------------ *
+   * Applications are logged automatically (fill → started, submit → applied)
+   * and abandoned "started" rows are auto-expired. A bookmark is the opposite:
+   * saved by hand, no pipeline status, and it NEVER expires — it's the "I'm not
+   * sure I'll apply" / "waiting on a referral" pile. Its own storage key so it
+   * can't pollute the applied stats or get swept up by the started-TTL. Deduped
+   * against the same job identity (sameJob) so re-hitting the button toggles.
+   */
+
+  // Identity of the job on the current page, shaped for a bookmark row.
+  function pageJob() {
+    return {
+      url: location.href.split("#")[0],
+      hostname: location.hostname,
+      jobTitle: bestEffortJobTitle().slice(0, 200),
+      company: bestEffortCompany().slice(0, 200),
+      ats: (pickAdapter() && pickAdapter().name) || "generic",
+    };
+  }
+
+  function getBookmarks() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(STORAGE_KEYS.bookmarks, (res) => {
+        resolve(res[STORAGE_KEYS.bookmarks] || []);
+      });
+    });
+  }
+
+  function setBookmarks(list) {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [STORAGE_KEYS.bookmarks]: list }, resolve);
+    });
+  }
+
+  // True when the current page is already in the bookmark list.
+  async function isBookmarked() {
+    const job = pageJob();
+    const list = await getBookmarks();
+    return list.some((b) => sameJob(b, job));
+  }
+
+  // Save the current page as a bookmark, or remove it if it's already saved.
+  // Returns { bookmarked } so the caller can flip its button state.
+  async function toggleBookmark() {
+    const job = pageJob();
+    const list = await getBookmarks();
+    const idx = list.findIndex((b) => sameJob(b, job));
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      await setBookmarks(list);
+      return { bookmarked: false };
+    }
+    const now = Date.now();
+    list.unshift({
+      ...job,
+      id: newAppId(),
+      note: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await setBookmarks(list.slice(0, 500));
+    return { bookmarked: true };
   }
 
   function isSubmitControl(el) {
@@ -593,7 +662,23 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  // Bot-trap ("honeypot") fields — e.g. Oracle's <input name="honey-pot"> on the
+  // apply-email step — are hidden from humans but sit in the DOM. Filling one
+  // flags the whole application as a bot and gets it silently rejected. Never
+  // touch them, in any adapter.
+  function isHoneypot(el) {
+    const s = (
+      (el.name || "") +
+      " " +
+      (el.id || "") +
+      " " +
+      ((el.getAttribute && el.getAttribute("aria-label")) || "")
+    ).toLowerCase();
+    return /honey\s*-?\s*pot/.test(s);
+  }
+
   function fillField(el, value) {
+    if (isHoneypot(el)) return false;
     if (!value || !isVisible(el)) return false;
     if (el.tagName === "SELECT") {
       const wanted = value.toLowerCase();
@@ -1756,6 +1841,9 @@
   // uploads (e.g. certification / cover letter). Greenhouse uses id="resume";
   // Workday uses file-upload-input-ref and clears the input after each upload.
   let resumeAttachLock = false;
+  // Gated by settings.attachResume — refreshed at the start of every fill (see
+  // fillPage). Default true so a stray call outside a fill still behaves.
+  let attachResumeEnabled = true;
 
   function findResumeUploadScope() {
     const heading = document.getElementById("Resume/CV-section");
@@ -1830,6 +1918,7 @@
 
   function attachResume(resume) {
     if (!resume) return false;
+    if (!attachResumeEnabled) return false; // user turned off auto-attach in Settings
     // One attempt per Fill click — Workday upload is async; without this lock
     // the wizard re-enters and stacks identical PDFs.
     if (resumeAttachLock) return false;
@@ -2016,9 +2105,13 @@
       }
     }
     filled += fillItems(items, profile, ctx, handled);
-    const combo = await fillComboboxes(items, profile, settings);
-    filled += combo.filled || 0;
-    if (combo.warnings && combo.warnings.length) warnings.push(...combo.warnings);
+    // Some adapters (Oracle) own a bespoke combobox flow and suppress the generic
+    // react-select pass, which would otherwise type raw text into their typeaheads.
+    if (!opts.skipComboboxPass) {
+      const combo = await fillComboboxes(items, profile, settings);
+      filled += combo.filled || 0;
+      if (combo.warnings && combo.warnings.length) warnings.push(...combo.warnings);
+    }
     filled += await fillDateOfBirthFields(profile);
     return { filled, warnings };
   }
@@ -5351,6 +5444,214 @@
   };
 
   /* ------------------------------------------------------------------ *
+   * 4o. Oracle Recruiting Cloud (Fusion "Candidate Experience", Redwood/JET)
+   * ------------------------------------------------------------------ *
+   * The whole multi-section form renders on one /apply/section/N page. Plain
+   * fields are native <input>/<textarea> with clean, semantic name attributes
+   * (firstName, addressLine1, …) and a <label for="{id}"> the generic label pass
+   * already reads — so runAdapter() fills most of them. What's Oracle-specific:
+   *   - Country / State / phone code / EEO are `cx-select-input` typeaheads:
+   *     role="combobox", aria-autocomplete="list", aria-controls="{id}-listbox".
+   *     Typing filters a role="grid" whose options are .cx-select__list-item
+   *     cells — you must type, wait for the grid, then click the matching cell.
+   *     The generic react-select pass can't drive these, so we skip it and run
+   *     our own picker here.
+   *   - A honeypot (name="honey-pot") sits on the email step — handled globally
+   *     by isHoneypot() in fillField().
+   */
+
+  const ORACLE_KNOWN = [
+    ['input[name="firstName"]', "firstName"],
+    ['input[name="lastName"]', "lastName"],
+    ['input[name="middleNames"]', "middleName"],
+    ['input[name="knownAs"]', "preferredName"],
+    ['input[name="email"]', "email"],
+    ['input[name="addressLine1"]', "addressLine1"],
+    ['input[name="city"]', "city"],
+    ['input[name="postalCode"]', "postalCode"],
+    ['input[name="fullName"]', "fullName"], // E-Signature
+  ];
+
+  function oracleComboboxInput(name) {
+    return document.querySelector(
+      `input[name="${name}"][aria-autocomplete="list"]`
+    );
+  }
+
+  // Cancel an in-flight Oracle typeahead. `clear` wipes any text we typed so a
+  // failed lookup doesn't leave an uncommitted, invalid value in the box.
+  function closeOracleCombobox(el, clear) {
+    if (clear) {
+      setNativeValue(el, "");
+      el.dispatchEvent(
+        new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" })
+      );
+    }
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 })
+    );
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.blur();
+  }
+
+  // Type into an Oracle cx-select typeahead, wait for its grid, click the first
+  // option that satisfies match(text). Returns true only on a committed pick.
+  async function pickOracleCombobox(el, typeahead, match) {
+    if (!el || !isVisible(el)) return false;
+    const cur = (el.value || "").trim();
+    if (cur && (!match || match(cur))) return false; // already set — don't clobber
+    el.focus();
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, view: window }));
+    setNativeValue(el, typeahead);
+    el.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: typeahead,
+        inputType: "insertText",
+      })
+    );
+    const lbId = el.getAttribute("aria-controls");
+    let listbox = null;
+    for (let i = 0; i < 14; i++) {
+      await sleep(110);
+      const lb = lbId ? document.getElementById(lbId) : null;
+      if (
+        lb &&
+        isVisibleListbox(lb) &&
+        lb.querySelector('.cx-select__list-item, [role="gridcell"], [role="option"]')
+      ) {
+        listbox = lb;
+        break;
+      }
+    }
+    if (!listbox) {
+      closeOracleCombobox(el, true);
+      return false;
+    }
+    let options = Array.from(listbox.querySelectorAll(".cx-select__list-item"));
+    if (!options.length) {
+      options = Array.from(
+        listbox.querySelectorAll('[role="option"], [role="gridcell"]')
+      );
+    }
+    const target = options.find((o) => {
+      const t = (o.textContent || "").replace(/\s+/g, " ").trim();
+      return t && match(t);
+    });
+    if (!target) {
+      closeOracleCombobox(el, true);
+      return false;
+    }
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, view: window }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, view: window }));
+    target.click();
+    await sleep(150);
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.blur();
+    return true;
+  }
+
+  async function fillOracleComboboxes(profile, settings) {
+    let filled = 0;
+
+    // Country.
+    if (profile.country) {
+      const el = oracleComboboxInput("country");
+      const want = profile.country.toLowerCase();
+      if (
+        el &&
+        (await pickOracleCombobox(el, profile.country, (t) => {
+          const s = t.toLowerCase();
+          return s === want || s.startsWith(want);
+        }))
+      ) {
+        filled++;
+      }
+    }
+
+    // State / province (Oracle names it region2).
+    if (profile.state) {
+      const el = oracleComboboxInput("region2");
+      if (el) {
+        const match = matchStateOption(profile.state, profile.country);
+        let ok = false;
+        for (const ta of stateTypeaheadCandidates(profile.state, profile.country)) {
+          ok = await pickOracleCombobox(el, ta, match);
+          if (ok) break;
+        }
+        if (ok) filled++;
+      }
+    }
+
+    // Phone country/region dialing code (best-effort — the national number is a
+    // plain type=tel filled by the generic pass).
+    if (profile.phoneCountryCode) {
+      const el = oracleComboboxInput("phoneNumber");
+      const code = profile.phoneCountryCode.replace(/[^\d+]/g, "");
+      if (el && code) {
+        const ta = profile.country || code;
+        if (
+          await pickOracleCombobox(el, ta, (t) =>
+            t.replace(/\s/g, "").includes(code)
+          )
+        ) {
+          filled++;
+        }
+      }
+    }
+
+    // EEO / diversity — only when the user has opted in (same policy as Workday).
+    if (settings && settings.autoDeclineEEO) {
+      const eeo = document.querySelectorAll(
+        'input[aria-autocomplete="list"][name^="IN-STANDARD-ORA_"],' +
+          'input[aria-autocomplete="list"][id*="GENDER"],' +
+          'input[aria-autocomplete="list"][id*="ETHNIC"],' +
+          'input[aria-autocomplete="list"][id*="DISABILITY"],' +
+          'input[aria-autocomplete="list"][id*="VETERAN"]'
+      );
+      for (const el of eeo) {
+        let ok = false;
+        for (const ta of ["prefer", "not", "decline", "do not"]) {
+          ok = await pickOracleCombobox(el, ta, (t) => DECLINE_RE.test(t));
+          if (ok) break;
+        }
+        if (ok) filled++;
+      }
+    }
+
+    return { filled, warnings: [] };
+  }
+
+  // {jobTitle, company} for the tracker. The tab title is "Job Title - Company
+  // Career Site Careers"; the pod hostname (hdjq…) is useless, so parse the title.
+  function scrapeOracleMeta() {
+    const dt = (document.title || "").replace(/\s+/g, " ").trim();
+    const m = dt.match(/^(.*?)\s[-–]\s(.+)$/);
+    const jobTitle = (m ? m[1] : dt).trim();
+    const company = m
+      ? m[2].replace(/\bcareer site\b|\bcareers?\b/gi, "").trim()
+      : "";
+    return { jobTitle: jobTitle.slice(0, 200), company: company.slice(0, 120) };
+  }
+
+  const oracleAdapter = {
+    name: "oracle",
+    label: "Oracle Recruiting",
+    async fill(profile, settings) {
+      const known = collectKnown(ORACLE_KNOWN);
+      const base = await runAdapter(known, profile, settings, {
+        skipComboboxPass: true,
+      });
+      const combo = await fillOracleComboboxes(profile, settings);
+      return {
+        filled: (base.filled || 0) + (combo.filled || 0),
+        warnings: [...(base.warnings || []), ...(combo.warnings || [])],
+        meta: scrapeOracleMeta(),
+      };
+    },
+  };
+
+  /* ------------------------------------------------------------------ *
    * 5. Router
    * ------------------------------------------------------------------ */
 
@@ -5594,6 +5895,16 @@
     return val;
   }
 
+  // Oracle Recruiting Cloud runs on tenant pods like hdjq.fa.us2.oraclecloud.com
+  // — no "jobs"/"careers" token in the host — so we key off the Candidate
+  // Experience app path. True on both the /job/{id} posting and the /apply flow.
+  function isOracleCXHost() {
+    return (
+      /(^|\.)oraclecloud\.com$/.test(location.hostname) &&
+      /\/(?:hcmUI\/)?CandidateExperience\//i.test(location.pathname)
+    );
+  }
+
   function pickAdapter() {
     const host = location.hostname.toLowerCase();
     // Greenhouse: hosted boards, embedded iframe, or the tell-tale field ids.
@@ -5628,6 +5939,9 @@
     // iCIMS: hosted domain (form often inside an icims.com iframe).
     if (host.includes("icims.com")) return icimsAdapter;
 
+    // Oracle Recruiting Cloud — Fusion Candidate Experience (Redwood/JET).
+    if (isOracleCXHost()) return oracleAdapter;
+
     // Google Forms: only when the gate says it's a job application.
     if (isJobGoogleForm()) return googleFormsAdapter;
 
@@ -5639,6 +5953,9 @@
     const host = location.hostname.toLowerCase();
     // Google Forms used as a job application (gated — see isJobGoogleForm).
     if (isJobGoogleForm()) return true;
+    // Oracle Candidate Experience — path-based, so it's true even before the SPA
+    // has rendered the form (the deep-link redirects, but /job and /apply match).
+    if (isOracleCXHost()) return true;
     if (
       /greenhouse\.io$/.test(host) ||
       host.includes("greenhouse") ||
@@ -6016,6 +6333,7 @@
       return { filled: 0, needsProfile: true };
     }
     const settings = await getSettings();
+    attachResumeEnabled = settings.attachResume !== false; // default on
     const adapter = pickAdapter();
     const result = await adapter.fill(profile, settings);
     const filled = result.filled || 0;
@@ -6603,6 +6921,10 @@
     scanProgress: scanFormProgress,
     focusField: focusFormField,
     jobInfo,
+    pageJob,
+    isBookmarked,
+    toggleBookmark,
+    toast,
   };
 
   // Cross-frame relay: sidebar → iframes ("fill"), iframe → top ("submitted").

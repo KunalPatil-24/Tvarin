@@ -949,10 +949,9 @@
                       ${selectField("sexualOrientation", "Sexual orientation", ORIENTATION_OPTS, { full: true })}
                       ${selectField("disabilityStatus", "Disability status", DISABILITY_OPTS, { full: true })}
                     </div>
-                    <label class="check">
-                      <input name="autoDeclineEEO" type="checkbox" />
-                      <span>If a demographic answer is not set, auto-answer as “Decline to self-identify.” Off by default.</span>
-                    </label>
+                    <p class="note note--sub">
+                      Prefer to skip these? Turn on “Auto-decline diversity questions” in Settings (the gear, top-right) and Tvarin will answer “prefer not to say” for any you leave blank.
+                    </p>
                   </div>
                   <div class="panel" data-panel="ai" hidden>
                     <p class="note">
@@ -1090,9 +1089,8 @@
 
   async function load() {
     ensure();
-    const data = await get([KEYS.profile, KEYS.settings, KEYS.ai]);
+    const data = await get([KEYS.profile, KEYS.ai]);
     const profile = data[KEYS.profile] || {};
-    const settings = data[KEYS.settings] || {};
     const ai = data[KEYS.ai] || {};
     const form = root.querySelector('[data-el="form"]');
 
@@ -1101,9 +1099,6 @@
     });
     renderEducations(normalizeEducations(profile));
     renderExperiences(normalizeExperiences(profile));
-    if (form.elements.autoDeclineEEO) {
-      form.elements.autoDeclineEEO.checked = !!settings.autoDeclineEEO;
-    }
     if (form.elements.aiResumeText) {
       form.elements.aiResumeText.value = ai.resumeText || "";
     }
@@ -1157,9 +1152,6 @@
     const eduBlob = formatEducationBlob(educations);
     if (eduBlob) profile.education = eduBlob;
 
-    const settings = {
-      autoDeclineEEO: !!(form.elements.autoDeclineEEO && form.elements.autoDeclineEEO.checked),
-    };
     const ai = {
       resumeText: form.elements.aiResumeText
         ? form.elements.aiResumeText.value.trim()
@@ -1167,9 +1159,10 @@
     };
 
     try {
+      // Note: the modal no longer writes tvarin.settings — the Settings view
+      // owns it now, so saving your profile can't wipe those switches.
       await set({
         [KEYS.profile]: profile,
-        [KEYS.settings]: settings,
         [KEYS.ai]: ai,
       });
       saved.textContent = "Saved";

@@ -344,7 +344,7 @@ form.addEventListener("submit", (e) => {
     resumeText: form.elements.aiResumeText ? form.elements.aiResumeText.value.trim() : "",
   };
 
-  chrome.storage.local.get([PROFILE_KEY], (res) => {
+  chrome.storage.local.get([PROFILE_KEY, SETTINGS_KEY], (res) => {
     const prev = res[PROFILE_KEY] || {};
     // Keep structured Education / Work Experience from the sidebar modal.
     if (Array.isArray(prev.educations) && prev.educations.length) {
@@ -357,7 +357,13 @@ form.addEventListener("submit", (e) => {
     if (prev.experience) profile.experience = prev.experience;
 
     chrome.storage.local.set(
-      { [PROFILE_KEY]: profile, [SETTINGS_KEY]: settings, [AI_KEY]: ai },
+      {
+        [PROFILE_KEY]: profile,
+        // Merge, don't replace — keep switches the Settings view owns
+        // (autoOpen, attachResume) that this legacy page doesn't know about.
+        [SETTINGS_KEY]: { ...(res[SETTINGS_KEY] || {}), ...settings },
+        [AI_KEY]: ai,
+      },
       () => {
         if (chrome.runtime.lastError) {
           showNote("Save failed: " + chrome.runtime.lastError.message, false);

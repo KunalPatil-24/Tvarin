@@ -22,6 +22,7 @@ const $ = (sel) => document.querySelector(sel);
 const el = (name) => document.querySelector(`[data-el="${name}"]`);
 
 let apps = [];
+let bookmarks = [];
 let filter = "all";
 
 function esc(s) {
@@ -122,6 +123,7 @@ async function render(session) {
   });
 
   await loadApps();
+  await loadBookmarks();
 }
 
 async function loadApps() {
@@ -339,6 +341,88 @@ function openDetail(id) {
 function closeDetail() {
   el("drawer").hidden = true;
   el("overlay").hidden = true;
+}
+
+// ---------- Bookmarks (saved-for-later) ----------
+async function loadBookmarks() {
+  const { data, error } = await client
+    .from("bookmarks")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) {
+    // Most likely the bookmarks table hasn't been created yet — fail quietly so
+    // the applications view still works.
+    bookmarks = [];
+    renderBookmarks();
+    return;
+  }
+  bookmarks = data || [];
+  renderBookmarks();
+}
+
+function renderBookmarks() {
+  const rows = el("bmk-rows");
+  if (!rows) return;
+
+  if (!bookmarks.length) {
+    rows.innerHTML = "";
+    el("bmk-empty").hidden = false;
+    return;
+  }
+  el("bmk-empty").hidden = true;
+
+  rows.innerHTML = bookmarks
+    .map((b) => {
+      const company = b.company || b.hostname || "";
+      const titleText = esc(b.job_title || b.hostname || "Saved job");
+      const av = avatarFor(company || titleText);
+      const title = b.url
+        ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${titleText}<span class="ext">${EXT_ICON}</span></a>`
+        : titleText;
+      const sub =
+        b.hostname && b.hostname !== company ? `<div class="job__sub">${esc(b.hostname)}</div>` : "";
+      const src = b.ats ? `<span class="src">${esc(b.ats)}</span>` : `<span class="muted">—</span>`;
+      return `
+        <tr data-id="${esc(b.id)}">
+          <td>
+            <div class="cell-role">
+              <span class="logo" style="${av.style}">${esc(av.initial)}</span>
+              <div><div class="job__title">${title}</div>${sub}</div>
+            </div>
+          </td>
+          <td class="muted">${esc(company)}</td>
+          <td>${src}</td>
+          <td><input class="note-input" data-id="${esc(b.id)}" value="${esc(b.note || "")}" placeholder="Add a note — e.g. waiting on referral" /></td>
+          <td class="muted">${timeAgo(b.created_at)}</td>
+          <td><button class="del" data-id="${esc(b.id)}" title="Remove">×</button></td>
+        </tr>`;
+    })
+    .join("");
+
+  rows.querySelectorAll("input.note-input").forEach((inp) => {
+    inp.addEventListener("change", () => updateBookmarkNote(inp.getAttribute("data-id"), inp.value));
+  });
+  rows.querySelectorAll("button.del").forEach((btn) => {
+    btn.addEventListener("click", () => removeBookmark(btn.getAttribute("data-id")));
+  });
+}
+
+async function updateBookmarkNote(id, note) {
+  const { error } = await client
+    .from("bookmarks")
+    .update({ note, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) return;
+  const b = bookmarks.find((x) => x.id === id);
+  if (b) b.note = note;
+}
+
+async function removeBookmark(id) {
+  if (!confirm("Remove this bookmark?")) return;
+  const { error } = await client.from("bookmarks").delete().eq("id", id);
+  if (error) return;
+  bookmarks = bookmarks.filter((b) => b.id !== id);
+  renderBookmarks();
 }
 
 init();

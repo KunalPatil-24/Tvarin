@@ -21,7 +21,9 @@
   const STORAGE_KEYS = {
     profile: "tvarin.profile",
     applications: "tvarin.applications",
+    bookmarks: "tvarin.bookmarks",
     resume: "tvarin.resume",
+    settings: "tvarin.settings",
     session: "tvarin.session",
   };
 
@@ -308,18 +310,19 @@
     .login-status--err { color: #dc2626; }
     .btn-match {
       width: 100%;
-      border: 1px solid #2f6fed;
+      margin-top: 10px;
+      border: 1px solid #cdddfb;
       border-radius: 12px;
-      padding: 12px 16px;
+      padding: 10px 16px;
       background: #ffffff;
       color: #2f6fed;
       font-family: inherit;
-      font-size: 14px;
+      font-size: 13.5px;
       font-weight: 700;
       cursor: pointer;
-      transition: background 0.15s ease;
+      transition: background 0.15s ease, border-color 0.15s ease;
     }
-    .btn-match:hover { background: #eaf2ff; }
+    .btn-match:hover { background: #eaf2ff; border-color: #2f6fed; }
     .btn-match:disabled { opacity: 0.6; cursor: default; }
     .match { margin-top: 12px; }
     .match[hidden] { display: none !important; }
@@ -467,6 +470,136 @@
       color: #6b7280;
       text-align: center;
     }
+    .icon-btn--bookmark.is-saved {
+      background: #fff7ed;
+      border-color: #f5b301;
+      color: #b45309;
+    }
+    .icon-btn--bookmark.is-saved:hover { background: #ffedd5; color: #b45309; }
+    .bmk-list { display: flex; flex-direction: column; gap: 8px; }
+    .bmk {
+      border: 1px solid #ebebeb;
+      border-radius: 12px;
+      background: #fff;
+      padding: 11px 12px;
+    }
+    .bmk__top { display: flex; align-items: flex-start; gap: 10px; }
+    .bmk__main { flex: 1; min-width: 0; }
+    .bmk__title {
+      display: block;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #111;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .bmk__meta {
+      display: block;
+      font-size: 11.5px;
+      color: #6b7280;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .bmk__wait {
+      display: inline-block;
+      margin-top: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #b45309;
+      background: #fff7ed;
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .bmk__actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .bmk__open, .bmk__remove {
+      width: 26px;
+      height: 26px;
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      border-radius: 6px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+    .bmk__open:hover { background: #eff6ff; color: #2f6fed; }
+    .bmk__remove { font-size: 18px; line-height: 1; }
+    .bmk__remove:hover { background: #fef2f2; color: #b42318; }
+    .bmk__note {
+      width: 100%;
+      margin-top: 9px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 7px 9px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #374151;
+      background: #fff;
+      resize: vertical;
+      min-height: 34px;
+      box-sizing: border-box;
+    }
+    .bmk__note::placeholder { color: #9ca3af; }
+    .bmk__note:focus { outline: none; border-color: #2f6fed; box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.14); }
+    .set-group-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #9ca3af;
+      margin: 18px 0 0;
+    }
+    .set-group-label:first-of-type { margin-top: 6px; }
+    .set-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 13px 2px;
+      border-top: 1px solid #f0f0f0;
+      cursor: pointer;
+    }
+    .set-row__text { flex: 1; min-width: 0; }
+    .set-row__title { display: block; font-size: 14px; font-weight: 600; color: #111; }
+    .set-row__desc {
+      display: block;
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 3px;
+      line-height: 1.45;
+    }
+    .switch {
+      -webkit-appearance: none;
+      appearance: none;
+      flex-shrink: 0;
+      width: 40px;
+      height: 23px;
+      margin: 1px 0 0;
+      border-radius: 999px;
+      background: #d5d7dd;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.18s ease;
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 19px;
+      height: 19px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      transition: transform 0.18s ease;
+    }
+    .switch:checked { background: #2f6fed; }
+    .switch:checked::after { transform: translateX(17px); }
+    .switch:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.25); }
     .stats {
       display: flex;
       align-items: center;
@@ -802,7 +935,7 @@
   }
 
   const MARK_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>`;
-  const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2m-3.5-6.5-1.4 1.4M6.9 17.1l-1.4 1.4m0-12.6 1.4 1.4m10.2 10.2 1.4 1.4"/></svg>`;
+  const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
   const COLLAPSE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
   const USER_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></svg>`;
   const DOC_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3z"/><path d="M14 3v5h5"/></svg>`;
@@ -810,6 +943,9 @@
   const CHEV_UP_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 14l6-6 6 6"/></svg>`;
   const CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L19 7"/></svg>`;
   const BACK_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
+  const BOOKMARK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.9.5L12 18l-6.1 3.4a.6.6 0 0 1-.9-.5V5a1 1 0 0 1 1-1z"/></svg>`;
+  const BOOKMARK_FILL_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v16.4a.6.6 0 0 1-.9.5L12 18l-6.1 3.9A.6.6 0 0 1 5 21.4V4a1 1 0 0 1 1-1z"/></svg>`;
+  const EXT_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>`;
   const MAX_RESUME_BYTES = 2 * 1024 * 1024;
 
   function formatSize(bytes) {
@@ -856,7 +992,8 @@
               <span>Tvarin</span>
             </div>
             <div class="head__actions">
-              <button class="icon-btn" type="button" data-action="profile" title="Profile & settings" aria-label="Profile & settings">${GEAR_SVG}</button>
+              <button class="icon-btn icon-btn--bookmark" type="button" data-action="bookmark-toggle" data-el="bookmark-btn" title="Bookmark this job" aria-label="Bookmark this job" aria-pressed="false">${BOOKMARK_SVG}</button>
+              <button class="icon-btn" type="button" data-action="settings" title="Settings" aria-label="Settings">${GEAR_SVG}</button>
               <button class="icon-btn" type="button" data-action="close" title="Minimize" aria-label="Minimize sidebar">${COLLAPSE_SVG}</button>
             </div>
           </header>
@@ -872,14 +1009,10 @@
               </div>
               <div class="fill-ready" data-el="fill-ready" hidden>
                 <button class="btn-fill" type="button" data-action="fill">Fill this page</button>
-                <p class="card__sub">Apply in seconds from your saved profile</p>
                 <p class="result" data-el="result" aria-live="polite"></p>
+                <button class="btn-match" type="button" data-action="match" data-el="match-btn">Check job match</button>
+                <div class="match" data-el="match-result" hidden></div>
               </div>
-            </div>
-            <div class="card match-card" data-el="match-card" hidden>
-              <button class="btn-match" type="button" data-action="match" data-el="match-btn">Check job match</button>
-              <p class="card__sub">How your resume matches this job</p>
-              <div class="match" data-el="match-result" hidden></div>
             </div>
             <div class="stats" data-el="stats">
               <span><span data-el="stat-total">0</span> applied</span>
@@ -908,6 +1041,14 @@
                 <span class="row__text">
                   <span class="row__title">Applications</span>
                   <span class="row__meta" data-el="tracker-status">Track your applications</span>
+                </span>
+                <span class="row__chev">${CHEV_SVG}</span>
+              </button>
+              <button class="row" type="button" data-action="bookmarks">
+                <span class="row__icon">${BOOKMARK_SVG}</span>
+                <span class="row__text">
+                  <span class="row__title">Bookmarks</span>
+                  <span class="row__meta" data-el="bookmarks-status">Jobs you saved for later</span>
                 </span>
                 <span class="row__chev">${CHEV_SVG}</span>
               </button>
@@ -941,6 +1082,40 @@
             <div class="tracker-summary" data-el="tracker-summary"></div>
             <div class="tracker-list" data-el="tracker-list"></div>
           </div>
+          <div class="body view" data-view="bookmarks" hidden>
+            <button class="back" type="button" data-action="home">${BACK_SVG} Back</button>
+            <h2 class="resume-title">Bookmarks</h2>
+            <p class="resume-note">Jobs you saved by hand to decide on later. Nothing here expires — perfect for the ones where you're waiting on a referral. Add a note to remember what you're waiting for.</p>
+            <div class="bmk-list" data-el="bookmarks-list"></div>
+          </div>
+          <div class="body view" data-view="settings" hidden>
+            <button class="back" type="button" data-action="home">${BACK_SVG} Back</button>
+            <h2 class="resume-title">Settings</h2>
+            <p class="resume-note">How Tvarin behaves on job pages. Changes save automatically.</p>
+            <div class="set-group-label">Panel</div>
+            <label class="set-row">
+              <span class="set-row__text">
+                <span class="set-row__title">Open automatically on job pages</span>
+                <span class="set-row__desc">The panel slides open when a job application is detected. Off — it waits as a tab until you click it.</span>
+              </span>
+              <input type="checkbox" class="switch" data-el="set-autoOpen" data-key="autoOpen" aria-label="Open automatically on job pages" />
+            </label>
+            <div class="set-group-label">Autofill</div>
+            <label class="set-row">
+              <span class="set-row__text">
+                <span class="set-row__title">Attach my resume when filling</span>
+                <span class="set-row__desc">Drop your saved resume into the application's upload box. Off — you'll attach a file yourself.</span>
+              </span>
+              <input type="checkbox" class="switch" data-el="set-attachResume" data-key="attachResume" aria-label="Attach my resume when filling" />
+            </label>
+            <label class="set-row">
+              <span class="set-row__text">
+                <span class="set-row__title">Auto-decline diversity questions</span>
+                <span class="set-row__desc">Answer “prefer not to say” on optional gender, race, veteran, and disability questions. Off by default.</span>
+              </span>
+              <input type="checkbox" class="switch" data-el="set-autoDeclineEEO" data-key="autoDeclineEEO" aria-label="Auto-decline diversity questions" />
+            </label>
+          </div>
           <footer class="progress" data-el="progress" hidden>
             <button class="progress__head" type="button" data-action="toggle-progress" aria-expanded="false">
               <span class="progress__summary" data-el="progress-summary">Scanning fields…</span>
@@ -971,6 +1146,9 @@
         } else {
           chrome.runtime.sendMessage({ type: "TVARIN_OPEN_OPTIONS" });
         }
+      } else if (action === "settings") {
+        showView("settings");
+        await renderSettings();
       } else if (action === "options") {
         chrome.runtime.sendMessage({ type: "TVARIN_OPEN_OPTIONS" });
       } else if (action === "resume") {
@@ -984,6 +1162,13 @@
         chrome.runtime.sendMessage({ type: "TVARIN_OPEN_DASHBOARD" });
       } else if (action === "app-remove") {
         await removeApp(el.getAttribute("data-app-ts"));
+      } else if (action === "bookmark-toggle") {
+        await onBookmarkToggle(el);
+      } else if (action === "bookmarks") {
+        showView("bookmarks");
+        await renderBookmarks();
+      } else if (action === "bookmark-remove") {
+        await removeBookmark(el.getAttribute("data-bmk-id"));
       } else if (action === "toggle-progress") toggleProgressExpanded();
       else if (action === "focus-field") {
         const id = el.getAttribute("data-field-id");
@@ -997,11 +1182,23 @@
     const resumeInput = root.querySelector('[data-el="resume-input"]');
     resumeInput.addEventListener("change", () => onResumeFile(resumeInput));
 
-    // Status dropdowns in the tracker (change doesn't bubble through click).
+    // Status dropdowns in the tracker + bookmark notes (change doesn't bubble
+    // through the click handler above; it fires on commit/blur).
     root.querySelector(".panel").addEventListener("change", async (e) => {
       const sel = e.target.closest("select.app-status");
-      if (!sel) return;
-      await setAppStatus(sel.getAttribute("data-app-ts"), sel.value);
+      if (sel) {
+        await setAppStatus(sel.getAttribute("data-app-ts"), sel.value);
+        return;
+      }
+      const note = e.target.closest("textarea.bmk__note");
+      if (note) {
+        await setBookmarkNote(note.getAttribute("data-bmk-id"), note.value);
+        return;
+      }
+      const sw = e.target.closest("input.switch[data-key]");
+      if (sw) {
+        await setSetting(sw.getAttribute("data-key"), sw.checked);
+      }
     });
 
     return root;
@@ -1036,14 +1233,15 @@
     }
   }
 
+  // One card, two faces: the login gate (signed out) XOR the Fill + Match
+  // actions (signed in). Fill and Match now live together in .fill-ready, so a
+  // single toggle can't leave them out of sync with the gate.
   function applyAuthUi() {
     if (!root) return;
     const gate = root.querySelector('[data-el="login-gate"]');
     const ready = root.querySelector('[data-el="fill-ready"]');
-    const matchCard = root.querySelector('[data-el="match-card"]');
     if (gate) gate.hidden = signedIn;
     if (ready) ready.hidden = !signedIn;
-    if (matchCard) matchCard.hidden = !signedIn;
   }
 
   function setLoginStatus(text, isErr) {
@@ -1080,10 +1278,12 @@
     const data = await get([
       STORAGE_KEYS.profile,
       STORAGE_KEYS.applications,
+      STORAGE_KEYS.bookmarks,
       STORAGE_KEYS.resume,
     ]);
     const profile = data[STORAGE_KEYS.profile];
     const apps = data[STORAGE_KEYS.applications] || [];
+    const bookmarks = data[STORAGE_KEYS.bookmarks] || [];
     const resume = data[STORAGE_KEYS.resume];
 
     const statusEl = root.querySelector('[data-el="profile-status"]');
@@ -1136,6 +1336,14 @@
         ? `${apps.length} tracked · ${applied.length} applied`
         : "Track your applications";
     }
+
+    const bookmarksStatus = root.querySelector('[data-el="bookmarks-status"]');
+    if (bookmarksStatus) {
+      bookmarksStatus.textContent = bookmarks.length
+        ? `${bookmarks.length} saved`
+        : "Jobs you saved for later";
+    }
+    await refreshBookmarkButton();
 
     renderProgress();
   }
@@ -1480,6 +1688,142 @@
     await render();
   }
 
+  /* ----- Bookmarks ----- */
+
+  // Paint the header bookmark icon for the current page: amber + filled when
+  // this job is saved, plain outline when not. The actual save/dedup lives in
+  // content.js (TvarinAPI) so it shares one job identity with applications.
+  async function refreshBookmarkButton() {
+    if (!root) return;
+    const btn = root.querySelector('[data-el="bookmark-btn"]');
+    if (!btn) return;
+    const api = globalThis.TvarinAPI;
+    let saved = false;
+    if (api && typeof api.isBookmarked === "function") {
+      try {
+        saved = await api.isBookmarked();
+      } catch (_) {}
+    }
+    btn.classList.toggle("is-saved", saved);
+    btn.setAttribute("aria-pressed", saved ? "true" : "false");
+    const label = saved ? "Saved — remove bookmark" : "Bookmark this job";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = saved ? BOOKMARK_FILL_SVG : BOOKMARK_SVG;
+  }
+
+  let bookmarkBusy = false;
+  async function onBookmarkToggle(btn) {
+    const api = globalThis.TvarinAPI;
+    if (!api || typeof api.toggleBookmark !== "function") return;
+    if (bookmarkBusy) return; // ignore double-taps mid-write (would duplicate/flip)
+    bookmarkBusy = true;
+    let res = null;
+    try {
+      res = await api.toggleBookmark();
+    } catch (_) {}
+    bookmarkBusy = false;
+    await refreshBookmarkButton();
+    await render();
+    // Confirm the action — the button is just an icon now, so a brief toast
+    // makes the save/remove unmistakable (and teaches where bookmarks live).
+    if (res && typeof api.toast === "function") {
+      api.toast(res.bookmarked ? "Saved to Bookmarks" : "Removed from Bookmarks", 2200);
+    }
+  }
+
+  async function renderBookmarks() {
+    ensure();
+    const data = await get([STORAGE_KEYS.bookmarks]);
+    const list = (data[STORAGE_KEYS.bookmarks] || []).slice();
+    const listEl = root.querySelector('[data-el="bookmarks-list"]');
+    if (!listEl) return;
+
+    if (!list.length) {
+      listEl.innerHTML =
+        `<div class="tracker-empty">No bookmarks yet. On any job page, hit <b>Bookmark this page</b> and it'll wait for you here — as long as you need.</div>`;
+      return;
+    }
+
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    listEl.innerHTML = list
+      .map((b) => {
+        const id = escapeHtml(b.id || "");
+        const title = escapeHtml(b.jobTitle || b.hostname || "Saved job");
+        const company = b.company || b.hostname || "";
+        const meta = escapeHtml(company);
+        const wait = b.createdAt ? `Saved ${timeAgo(b.createdAt)}` : "";
+        const url = b.url ? escapeHtml(b.url) : "";
+        const open = url
+          ? `<a class="bmk__open" href="${url}" target="_blank" rel="noopener noreferrer" title="Open job" aria-label="Open job">${EXT_SVG}</a>`
+          : "";
+        return `
+          <div class="bmk">
+            <div class="bmk__top">
+              <div class="bmk__main">
+                <span class="bmk__title">${title}</span>
+                <span class="bmk__meta">${meta}</span>
+                ${wait ? `<span class="bmk__wait">${escapeHtml(wait)}</span>` : ""}
+              </div>
+              <div class="bmk__actions">
+                ${open}
+                <button class="bmk__remove" type="button" data-action="bookmark-remove" data-bmk-id="${id}" title="Remove" aria-label="Remove">×</button>
+              </div>
+            </div>
+            <textarea class="bmk__note" data-bmk-id="${id}" rows="1" placeholder="Add a note — e.g. waiting on referral from…">${escapeHtml(b.note || "")}</textarea>
+          </div>`;
+      })
+      .join("");
+  }
+
+  async function setBookmarkNote(id, note) {
+    const data = await get([STORAGE_KEYS.bookmarks]);
+    const list = data[STORAGE_KEYS.bookmarks] || [];
+    const i = list.findIndex((b) => String(b.id) === String(id));
+    if (i < 0) return;
+    // Save in place — don't re-render, or we'd yank the textarea out from under
+    // the user mid-edit.
+    list[i] = { ...list[i], note: String(note || "").slice(0, 500), updatedAt: Date.now() };
+    await set({ [STORAGE_KEYS.bookmarks]: list });
+  }
+
+  async function removeBookmark(id) {
+    const data = await get([STORAGE_KEYS.bookmarks]);
+    const list = (data[STORAGE_KEYS.bookmarks] || []).filter(
+      (b) => String(b.id) !== String(id)
+    );
+    await set({ [STORAGE_KEYS.bookmarks]: list });
+    await renderBookmarks();
+    await render();
+  }
+
+  /* ----- Settings ----- */
+
+  // Paint each switch from stored settings. Defaults: auto-open ON, attach
+  // resume ON, auto-decline EEO OFF (sensitive — opt-in).
+  async function renderSettings() {
+    ensure();
+    const data = await get([STORAGE_KEYS.settings]);
+    const s = data[STORAGE_KEYS.settings] || {};
+    const q = (el) => root.querySelector(`[data-el="${el}"]`);
+    const autoOpen = q("set-autoOpen");
+    const attachResume = q("set-attachResume");
+    const eeo = q("set-autoDeclineEEO");
+    if (autoOpen) autoOpen.checked = s.autoOpen !== false;
+    if (attachResume) attachResume.checked = s.attachResume !== false;
+    if (eeo) eeo.checked = !!s.autoDeclineEEO;
+  }
+
+  // Merge one key into settings — never replace the whole object, or one screen
+  // would wipe another's switches. Takes effect on the next fill / page load.
+  async function setSetting(key, value) {
+    const data = await get([STORAGE_KEYS.settings]);
+    const s = data[STORAGE_KEYS.settings] || {};
+    s[key] = value;
+    await set({ [STORAGE_KEYS.settings]: s });
+  }
+
   function isJobApplicationPage() {
     if (globalThis.TvarinAPI && typeof globalThis.TvarinAPI.isJobPage === "function") {
       return globalThis.TvarinAPI.isJobPage();
@@ -1487,13 +1831,17 @@
     return false;
   }
 
-  function maybeAutoOpen() {
+  async function maybeAutoOpen() {
     if (!isJobApplicationPage()) return;
     const url = location.href.split("#")[0];
     if (autoOpenedForUrl === url) return;
     autoOpenedForUrl = url;
     ensure();
     render();
+    // Respect the "Open automatically on job pages" setting (default on). When
+    // off, the edge tab still mounts above — it just doesn't slide open.
+    const data = await get([STORAGE_KEYS.settings]);
+    if ((data[STORAGE_KEYS.settings] || {}).autoOpen === false) return;
     // Slight delay so the page paints first, then slide in.
     setTimeout(() => setOpen(true), 420);
   }
@@ -1566,20 +1914,44 @@
     if (
       changes[STORAGE_KEYS.profile] ||
       changes[STORAGE_KEYS.applications] ||
+      changes[STORAGE_KEYS.bookmarks] ||
       changes[STORAGE_KEYS.resume] ||
       changes[STORAGE_KEYS.session]
     ) {
       if (host) render();
     }
+    // Keep the open bookmarks list live on any change — a sync pull, another
+    // tab, or a note save (which only writes on blur, so re-rendering can't
+    // interrupt typing).
+    if (changes[STORAGE_KEYS.bookmarks] && host) renderBookmarks();
   });
 
-  // SPA / soft navigations on ATS sites
+  // SPA / soft navigations on ATS sites. Two triggers:
+  //   1. the URL changed (classic soft nav) — re-decide immediately, and
+  //   2. the URL is the same but the job verdict flipped — an SPA (Oracle CX,
+  //      etc.) that renders its form after document_idle without a URL change.
+  //      We only re-scan for a short window after each navigation so we're not
+  //      running isJobApplicationPage()'s DOM scan on every page forever.
+  const RECHECK_TICKS = 8; // ~10s at the 1200ms interval
   let lastHref = location.href;
+  let recheckTicks = RECHECK_TICKS;
+  let lastVerdict = isJobApplicationPage();
   const checkNav = () => {
     if (location.href !== lastHref) {
       lastHref = location.href;
       autoOpenedForUrl = "";
+      recheckTicks = RECHECK_TICKS;
       mountIfNeeded();
+      lastVerdict = isJobApplicationPage();
+      return;
+    }
+    if (recheckTicks > 0) {
+      recheckTicks--;
+      const verdict = isJobApplicationPage();
+      if (verdict !== lastVerdict) {
+        lastVerdict = verdict;
+        mountIfNeeded();
+      }
     }
   };
   setInterval(checkNav, 1200);
