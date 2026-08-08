@@ -24,6 +24,10 @@
     bookmarks: "tvarin.bookmarks",
     resume: "tvarin.resume",
     settings: "tvarin.settings",
+    // Small UI state: { tabTopFraction } — where the user dragged the bubble.
+    ui: "tvarin.ui",
+    // Hostnames the user chose to hide the bubble on ("Hide on this site").
+    hiddenSites: "tvarin.hiddenSites",
     session: "tvarin.session",
   };
 
@@ -94,6 +98,8 @@
 
   function onViewportResize() {
     if (open) applyPagePush();
+    const tabEl = root && root.querySelector(".tab");
+    if (tabEl) placeTab(tabEl);
   }
 
   function get(keys) {
@@ -136,7 +142,7 @@
       top: 0;
       right: 0;
       left: auto;
-      width: 36px;
+      width: 48px;
       height: 100vh;
       height: 100dvh;
       pointer-events: none;
@@ -153,8 +159,8 @@
       top: 28%;
       right: 0;
       left: auto;
-      width: 36px;
-      height: 88px;
+      width: 48px;
+      height: 58px;
       border: none;
       border-radius: 12px 0 0 12px;
       background: #2f6fed;
@@ -166,9 +172,97 @@
       box-shadow: -2px 4px 16px rgba(17, 24, 39, 0.12);
       transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
       opacity: 1;
+      touch-action: none;
     }
     .tab:hover { filter: brightness(1.05); }
-    .tab svg { width: 18px; height: 18px; }
+    .tab:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
+    .tab.tab--dragging { cursor: grabbing; transition: opacity 0.2s ease; }
+    .tab__mark { display: grid; place-items: center; pointer-events: none; }
+    .tab .tab__mark svg { width: 18px; height: 18px; }
+    /* Dedicated drag handle — only this strip moves the bubble. Appears on hover
+       on the right (screen-edge) side; the rest of the tab stays click-to-open. */
+    .tab__grip {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 13px;
+      display: grid;
+      place-items: center;
+      color: rgba(255, 255, 255, 0.9);
+      cursor: grab;
+      opacity: 0;
+      transition: opacity 0.14s ease;
+      pointer-events: none;
+    }
+    .tab:hover .tab__grip,
+    .tab:focus-within .tab__grip {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .tab__grip:active,
+    .tab.tab--dragging .tab__grip { cursor: grabbing; }
+    .tab__close {
+      position: absolute;
+      top: -9px;
+      left: -9px;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: #ffffff;
+      color: #6b7280;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      box-shadow: 0 1px 5px rgba(17, 24, 39, 0.3);
+      opacity: 0;
+      transform: scale(0.5);
+      transition: opacity 0.14s ease, transform 0.14s ease;
+      pointer-events: none;
+    }
+    .tab:hover .tab__close,
+    .tab:focus-within .tab__close {
+      opacity: 1;
+      transform: scale(1);
+      pointer-events: auto;
+    }
+    .tab__close:hover { color: #b42318; }
+    .tab__close svg { width: 11px; height: 11px; }
+    .tab-menu {
+      position: absolute;
+      top: -6px;
+      right: calc(100% + 10px);
+      width: 200px;
+      background: #ffffff;
+      color: #1f2937;
+      border: 1px solid #e8eaed;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(17, 24, 39, 0.18);
+      padding: 6px;
+      z-index: 5;
+      cursor: default;
+    }
+    .tab-menu[hidden] { display: none; }
+    .tab-menu__item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      padding: 9px 10px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: #1f2937;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tab-menu__item:hover { background: #f3f4f6; }
     .wrap.is-open .tab {
       transform: translateX(-398px);
       opacity: 0;
@@ -600,6 +694,32 @@
     .switch:checked { background: #2f6fed; }
     .switch:checked::after { transform: translateX(17px); }
     .switch:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.25); }
+    .set-hidden { margin-top: 2px; }
+    .set-empty { font-size: 12px; color: #9ca3af; padding: 10px 2px; line-height: 1.5; }
+    .hidden-site {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 2px;
+      border-top: 1px solid #f0f0f0;
+      font-size: 13px;
+      color: #374151;
+    }
+    .hidden-site__host { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hidden-site__remove {
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      font-size: 17px;
+      line-height: 1;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .hidden-site__remove:hover { background: #eef2ff; color: #2f6fed; }
     .stats {
       display: flex;
       align-items: center;
@@ -935,6 +1055,8 @@
   }
 
   const MARK_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h7l-2.5 8L20 8h-7l2.5-8L4 12z" fill="currentColor"/></svg>`;
+  const X_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+  const GRIP_SVG = `<svg viewBox="0 0 8 18" width="6" height="14" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1"/><circle cx="6" cy="3" r="1"/><circle cx="2" cy="9" r="1"/><circle cx="6" cy="9" r="1"/><circle cx="2" cy="15" r="1"/><circle cx="6" cy="15" r="1"/></svg>`;
   const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
   const COLLAPSE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
   const USER_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></svg>`;
@@ -984,7 +1106,15 @@
     root.innerHTML = `
       <style>${buildCss()}</style>
       <div class="wrap" part="wrap">
-        <button class="tab" type="button" title="Open Tvarin" aria-label="Open Tvarin">${MARK_SVG}</button>
+        <div class="tab" role="button" tabindex="0" title="Open Tvarin — drag the handle to move" aria-label="Open Tvarin">
+          <span class="tab__mark">${MARK_SVG}</span>
+          <span class="tab__grip" title="Drag to move" aria-hidden="true">${GRIP_SVG}</span>
+          <button class="tab__close" type="button" tabindex="0" title="Hide" aria-label="Hide Tvarin" aria-haspopup="menu">${X_SVG}</button>
+          <div class="tab-menu" data-el="tab-menu" role="menu" hidden>
+            <button type="button" class="tab-menu__item" data-menu="hide-visit" role="menuitem">Hide until next visit</button>
+            <button type="button" class="tab-menu__item" data-menu="hide-site" role="menuitem">Hide on this domain</button>
+          </div>
+        </div>
         <aside class="panel" role="complementary" aria-label="Tvarin">
           <header class="head">
             <div class="brand">
@@ -1115,6 +1245,8 @@
               </span>
               <input type="checkbox" class="switch" data-el="set-autoDeclineEEO" data-key="autoDeclineEEO" aria-label="Auto-decline diversity questions" />
             </label>
+            <div class="set-group-label">Hidden sites</div>
+            <div class="set-hidden" data-el="hidden-sites"></div>
           </div>
           <footer class="progress" data-el="progress" hidden>
             <button class="progress__head" type="button" data-action="toggle-progress" aria-expanded="false">
@@ -1133,7 +1265,7 @@
       </div>
     `;
 
-    root.querySelector(".tab").addEventListener("click", () => setOpen(true));
+    setupTab(root.querySelector(".tab"));
     root.querySelector(".panel").addEventListener("click", async (e) => {
       const el = e.target.closest("[data-action]");
       if (!el || !root.contains(el)) return;
@@ -1169,6 +1301,8 @@
         await renderBookmarks();
       } else if (action === "bookmark-remove") {
         await removeBookmark(el.getAttribute("data-bmk-id"));
+      } else if (action === "unhide-site") {
+        await unhideSite(el.getAttribute("data-host"));
       } else if (action === "toggle-progress") toggleProgressExpanded();
       else if (action === "focus-field") {
         const id = el.getAttribute("data-field-id");
@@ -1804,7 +1938,7 @@
   // resume ON, auto-decline EEO OFF (sensitive — opt-in).
   async function renderSettings() {
     ensure();
-    const data = await get([STORAGE_KEYS.settings]);
+    const data = await get([STORAGE_KEYS.settings, STORAGE_KEYS.hiddenSites]);
     const s = data[STORAGE_KEYS.settings] || {};
     const q = (el) => root.querySelector(`[data-el="${el}"]`);
     const autoOpen = q("set-autoOpen");
@@ -1813,6 +1947,22 @@
     if (autoOpen) autoOpen.checked = s.autoOpen !== false;
     if (attachResume) attachResume.checked = s.attachResume !== false;
     if (eeo) eeo.checked = !!s.autoDeclineEEO;
+
+    const list = Array.isArray(data[STORAGE_KEYS.hiddenSites])
+      ? data[STORAGE_KEYS.hiddenSites]
+      : [];
+    hiddenSites = list; // keep the cache in sync with what's on screen
+    const hiddenEl = q("hidden-sites");
+    if (hiddenEl) {
+      hiddenEl.innerHTML = list.length
+        ? list
+            .map(
+              (h) =>
+                `<div class="hidden-site"><span class="hidden-site__host">${escapeHtml(h)}</span><button class="hidden-site__remove" type="button" data-action="unhide-site" data-host="${escapeHtml(h)}" title="Show here again" aria-label="Un-hide ${escapeHtml(h)}">×</button></div>`
+            )
+            .join("")
+        : `<p class="set-empty">None. Use the × on the bubble → “Hide on this domain” to add one.</p>`;
+    }
   }
 
   // Merge one key into settings — never replace the whole object, or one screen
@@ -1846,6 +1996,179 @@
     setTimeout(() => setOpen(true), 420);
   }
 
+  /* ----- Edge tab (the "bubble"): dismiss on this page + drag to reposition ----- */
+
+  let bubbleDismissed = false; // hidden by the × for this page load (not global)
+  let tabTopFraction = null; // remembered vertical position, as a fraction of vh
+  let tabPosLoaded = false; // whether we've read tvarin.ui yet this session
+  let tabDragMoved = false; // set during a drag, to suppress the open-on-click
+  let hiddenSites = []; // cached tvarin.hiddenSites — sites the bubble stays hidden on
+  let tabMenuOpen = false; // the little × dropdown (hide options)
+
+  function currentHost() {
+    return location.hostname.replace(/^www\./, "");
+  }
+
+  function setupTab(tabEl) {
+    if (!tabEl) return;
+    tabEl.addEventListener("click", () => {
+      if (tabDragMoved) return; // a drag just ended — don't also open
+      setOpen(true);
+    });
+    tabEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setOpen(true);
+      }
+    });
+    const closeBtn = tabEl.querySelector(".tab__close");
+    const menuEl = tabEl.querySelector(".tab-menu");
+    if (closeBtn) {
+      // A press on × must neither start a drag nor open the panel.
+      closeBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (tabMenuOpen) closeTabMenu();
+        else openTabMenu(menuEl);
+      });
+    }
+    if (menuEl) {
+      menuEl.addEventListener("mousedown", (e) => e.stopPropagation());
+      menuEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const btn = e.target.closest("[data-menu]");
+        if (!btn) return;
+        const which = btn.getAttribute("data-menu");
+        closeTabMenu();
+        if (which === "hide-visit") dismissBubble();
+        else if (which === "hide-site") hideOnThisSite();
+      });
+    }
+    initTabDrag(tabEl);
+    positionTab(tabEl);
+  }
+
+  function initTabDrag(tabEl) {
+    let startY = 0;
+    let startTop = 0;
+    let dragging = false;
+    const onMove = (e) => {
+      const dy = e.clientY - startY;
+      if (!dragging && Math.abs(dy) < 4) return; // tolerate a jittery click
+      dragging = true;
+      tabDragMoved = true;
+      tabEl.classList.add("tab--dragging");
+      const h = tabEl.offsetHeight || 58;
+      const vh = window.innerHeight || 800;
+      const top = Math.max(8, Math.min(vh - h - 8, startTop + dy));
+      tabEl.style.top = `${top}px`;
+      e.preventDefault(); // stop the page selecting text mid-drag
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+      tabEl.classList.remove("tab--dragging");
+      if (dragging) {
+        saveTabPosition(tabEl);
+        // The click that fires right after mouseup must still see
+        // tabDragMoved=true; clear it next tick so the next real click opens.
+        setTimeout(() => {
+          tabDragMoved = false;
+        }, 0);
+      } else {
+        tabDragMoved = false;
+      }
+      dragging = false;
+    };
+    tabEl.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      // Only the grip drags — the rest of the tab is click-to-open.
+      if (!e.target.closest(".tab__grip")) return;
+      startY = e.clientY;
+      startTop = tabEl.getBoundingClientRect().top;
+      dragging = false;
+      tabDragMoved = false;
+      document.addEventListener("mousemove", onMove, true);
+      document.addEventListener("mouseup", onUp, true);
+    });
+  }
+
+  // Place the tab at its remembered vertical position (reads tvarin.ui once).
+  function positionTab(tabEl) {
+    if (!tabPosLoaded) {
+      get([STORAGE_KEYS.ui]).then((data) => {
+        tabPosLoaded = true;
+        const ui = data[STORAGE_KEYS.ui] || {};
+        if (typeof ui.tabTopFraction === "number") tabTopFraction = ui.tabTopFraction;
+        placeTab(tabEl);
+      });
+      return;
+    }
+    placeTab(tabEl);
+  }
+
+  function placeTab(tabEl) {
+    if (!tabEl || tabTopFraction == null) return; // null → keep the CSS default
+    const h = tabEl.offsetHeight || 88;
+    const vh = window.innerHeight || 800;
+    const top = Math.max(8, Math.min(vh - h - 8, tabTopFraction * vh));
+    tabEl.style.top = `${top}px`;
+  }
+
+  function saveTabPosition(tabEl) {
+    const vh = window.innerHeight || 1;
+    const styled = parseFloat(tabEl.style.top);
+    const px = Number.isFinite(styled) ? styled : tabEl.getBoundingClientRect().top;
+    tabTopFraction = Math.max(0, Math.min(1, px / vh));
+    set({ [STORAGE_KEYS.ui]: { tabTopFraction } });
+  }
+
+  // Hide the bubble for THIS page load only. It returns on the next job page, a
+  // reload, or the toolbar icon — never a global "off for all pages".
+  function dismissBubble() {
+    bubbleDismissed = true;
+    unmount();
+  }
+
+  // Persistently hide the bubble on the current host. Managed (and undone) from
+  // the "Hidden sites" list in Settings, so it's never a one-way trap.
+  function hideOnThisSite() {
+    const host = currentHost();
+    if (!hiddenSites.includes(host)) hiddenSites = [...hiddenSites, host];
+    set({ [STORAGE_KEYS.hiddenSites]: hiddenSites }); // cache updated above, sync
+    unmount();
+  }
+
+  async function unhideSite(host) {
+    hiddenSites = hiddenSites.filter((h) => h !== host);
+    await set({ [STORAGE_KEYS.hiddenSites]: hiddenSites });
+    await renderSettings();
+    // If we're on that host right now, bring the bubble back.
+    mountIfNeeded();
+  }
+
+  const onDocCloseMenu = () => closeTabMenu();
+  const onEscCloseMenu = (e) => {
+    if (e.key === "Escape") closeTabMenu();
+  };
+
+  function openTabMenu(menuEl) {
+    if (!menuEl) return;
+    menuEl.hidden = false;
+    tabMenuOpen = true;
+    // Defer so the click that opened it doesn't immediately close it.
+    setTimeout(() => document.addEventListener("click", onDocCloseMenu), 0);
+    document.addEventListener("keydown", onEscCloseMenu, true);
+  }
+
+  function closeTabMenu() {
+    tabMenuOpen = false;
+    const menuEl = root && root.querySelector(".tab-menu");
+    if (menuEl) menuEl.hidden = true;
+    document.removeEventListener("click", onDocCloseMenu);
+    document.removeEventListener("keydown", onEscCloseMenu, true);
+  }
+
   function unmount() {
     stopProgressPolling();
     open = false;
@@ -1860,6 +2183,11 @@
   }
 
   function mountIfNeeded() {
+    if (bubbleDismissed) return; // user hid the bubble on this page (× on the tab)
+    if (hiddenSites.includes(currentHost())) {
+      unmount();
+      return; // user chose "Hide on this site" — stays hidden until un-hidden in Settings
+    }
     // Only show the edge tab on job / application pages — not Instagram, YouTube, etc.
     if (!isJobApplicationPage()) {
       unmount();
@@ -1873,6 +2201,8 @@
   function watchHostSurvival() {
     // Some sites/extensions strip unknown nodes — put ours back (job pages only).
     const mo = new MutationObserver(() => {
+      if (bubbleDismissed) return;
+      if (hiddenSites.includes(currentHost())) return;
       if (!isJobApplicationPage()) return;
       if (host && !host.isConnected) {
         root = null;
@@ -1889,7 +2219,8 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg) return;
     if (msg.type === "TVARIN_TOGGLE_SIDEBAR") {
-      // Explicit toolbar click — allowed on any page.
+      // Explicit toolbar click — allowed on any page, and re-summons a dismissed bubble.
+      bubbleDismissed = false;
       ensure();
       render();
       toggle();
@@ -1897,6 +2228,7 @@
       return true;
     }
     if (msg.type === "TVARIN_OPEN_SIDEBAR") {
+      bubbleDismissed = false;
       ensure();
       render();
       setOpen(true);
@@ -1924,6 +2256,13 @@
     // tab, or a note save (which only writes on blur, so re-rendering can't
     // interrupt typing).
     if (changes[STORAGE_KEYS.bookmarks] && host) renderBookmarks();
+    // Hidden-sites list changed (e.g. un-hidden in another tab) — re-decide.
+    if (changes[STORAGE_KEYS.hiddenSites]) {
+      hiddenSites = Array.isArray(changes[STORAGE_KEYS.hiddenSites].newValue)
+        ? changes[STORAGE_KEYS.hiddenSites].newValue
+        : [];
+      mountIfNeeded();
+    }
   });
 
   // SPA / soft navigations on ATS sites. Two triggers:
@@ -1940,6 +2279,7 @@
     if (location.href !== lastHref) {
       lastHref = location.href;
       autoOpenedForUrl = "";
+      bubbleDismissed = false; // a new page — the bubble comes back
       recheckTicks = RECHECK_TICKS;
       mountIfNeeded();
       lastVerdict = isJobApplicationPage();
@@ -1960,12 +2300,17 @@
 
   // Wait briefly for content.js to publish TvarinAPI, then decide.
   const boot = () => {
-    mountIfNeeded();
-    watchHostSurvival();
-    // If API wasn't ready, retry once.
-    if (!globalThis.TvarinAPI) {
-      setTimeout(mountIfNeeded, 300);
-    }
+    // Load the hidden-sites list before the first mount so we never flash the
+    // bubble on a site the user chose to hide.
+    get([STORAGE_KEYS.hiddenSites]).then((d) => {
+      hiddenSites = Array.isArray(d[STORAGE_KEYS.hiddenSites]) ? d[STORAGE_KEYS.hiddenSites] : [];
+      mountIfNeeded();
+      watchHostSurvival();
+      // If API wasn't ready, retry once.
+      if (!globalThis.TvarinAPI) {
+        setTimeout(mountIfNeeded, 300);
+      }
+    });
   };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
